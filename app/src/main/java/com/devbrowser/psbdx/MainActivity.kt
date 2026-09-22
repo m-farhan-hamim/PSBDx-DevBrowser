@@ -9,6 +9,7 @@
 package com.devbrowser.psbdx
 
 import android.Manifest
+import android.os.Build
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -30,26 +31,49 @@ import com.devbrowser.psbdx.viewmodel.BrowserViewModel
 
 class MainActivity : ComponentActivity() {
 
-    // Requests the OS-level permissions a website might ask for (camera,
-    // microphone, precise location). Nothing is granted to any site just
-    // because the OS permission is granted here — every site still starts
-    // fully blocked until the user explicitly allows it from that site's
-    // site-info panel (tap the lock/warning icon in the address bar).
-    private val requestSitePermissions = registerForActivityResult(
+    // ---------------------------------------------------------------
+    // Permission timing, by design, for a side-loaded app's trust and
+    // safety: only permissions with an *immediate* browser-wide purpose
+    // are requested up front. Everything else (camera, microphone) is
+    // requested lazily, at the moment a website actually asks for it —
+    // and only after the user has explicitly allowed that specific site
+    // from the address bar's Site info panel. No permission dialog ever
+    // appears before the user has taken an action that needs it.
+    // ---------------------------------------------------------------
+
+    /** Requested immediately at launch: precise location (for "near me" style
+     *  browsing/geolocation prompts) and, on Android 13+, notifications. */
+    private val requestUpfrontPermissions = registerForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()
-    ) { /* no-op: WebChromeClient re-checks actual OS grants at request time */ }
+    ) { /* no-op: WebChromeClient/geolocation checks the actual OS grant at request time */ }
+
+    /** Requested lazily: fired only when a site the user has allowed asks for
+     *  camera or microphone and the OS permission isn't granted yet. */
+    private var pendingRuntimePermissionCallback: ((Boolean) -> Unit)? = null
+    private val requestRuntimePermissionLauncher = registerForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { granted ->
+        pendingRuntimePermissionCallback?.invoke(granted)
+        pendingRuntimePermissionCallback = null
+    }
+
+    /** Passed down to the WebView layer; called only when a site actually requests camera/mic. */
+    private fun requestRuntimePermission(permission: String, onResult: (Boolean) -> Unit) {
+        pendingRuntimePermissionCallback = onResult
+        requestRuntimePermissionLauncher.launch(permission)
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
 
-        requestSitePermissions.launch(
-            arrayOf(
-                Manifest.permission.CAMERA,
-                Manifest.permission.RECORD_AUDIO,
-                Manifest.permission.ACCESS_FINE_LOCATION
-            )
-        )
+        val upfrontPermissions = buildList {
+            add(Manifest.permission.ACCESS_FINE_LOCATION)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                add(Manifest.permission.POST_NOTIFICATIONS)
+            }
+        }
+        requestUpfrontPermissions.launch(upfrontPermissions.toTypedArray())
 
         val app = application as DevBrowserApplication
 
@@ -59,7 +83,10 @@ class MainActivity : ComponentActivity() {
                     val viewModel: BrowserViewModel = viewModel(
                         factory = BrowserViewModel.Factory(app.database, app.settingsRepository)
                     )
-                    MainScreen(viewModel = viewModel)
+                    MainScreen(
+                        viewModel = viewModel,
+                        requestRuntimePermission = ::requestRuntimePermission
+                    )
                 }
             }
         }

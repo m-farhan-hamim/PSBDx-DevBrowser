@@ -110,6 +110,13 @@ class BrowserViewModel(
         showAboutDialog = visible
     }
 
+    var showLicensesDialog by mutableStateOf(false)
+        private set
+
+    fun setLicensesDialogVisible(visible: Boolean) {
+        showLicensesDialog = visible
+    }
+
     var showSettingsDialog by mutableStateOf(false)
         private set
 

@@ -8,88 +8,38 @@
  */
 package com.devbrowser.psbdx.ui
 
-import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
-import androidx.compose.ui.Modifier
-import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.foundation.layout.Arrangement
 
 /**
- * "About / Open Source Notices" dialog, satisfying both:
- *  - the GPLv3 requirement that the app itself display appropriate legal
- *    notices, and
- *  - the MIT License's requirement that Eruda's copyright/permission
- *    notice be reproduced wherever the software is redistributed.
+ * Short "About" summary. Full license text (GPLv3 for the app, MIT for
+ * the bundled Eruda console) lives in its own "Licenses" dialog instead
+ * — see [LicensesDialog] — reached from the same overflow menu.
  */
 @Composable
-fun AboutDialog(onDismiss: () -> Unit) {
+fun AboutDialog(onDismiss: () -> Unit, onViewLicenses: () -> Unit) {
     AlertDialog(
         onDismissRequest = onDismiss,
         confirmButton = {
             TextButton(onClick = onDismiss) { Text("Close") }
         },
+        dismissButton = {
+            TextButton(onClick = onViewLicenses) { Text("Licenses") }
+        },
         title = { Text("About PSBDx DevBrowser") },
         text = {
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .verticalScroll(rememberScrollState()),
-                verticalArrangement = Arrangement.spacedBy(12.dp)
-            ) {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text(
                     "PSBDx DevBrowser is a free and open-source developer " +
                         "browser that injects a full web console, DOM " +
                         "inspector, and network logger into any site."
                 )
-
-                Text("App License", fontWeight = FontWeight.Bold)
-                Text(
-                    "PSBDx DevBrowser\n" +
-                        "Copyright (C) 2024 PSBDx DevBrowser Contributors\n\n" +
-                        "This program is free software: you can redistribute it " +
-                        "and/or modify it under the terms of the GNU General " +
-                        "Public License as published by the Free Software " +
-                        "Foundation, either version 3 of the License, or (at " +
-                        "your option) any later version.\n\n" +
-                        "This program is distributed in the hope that it will " +
-                        "be useful, but WITHOUT ANY WARRANTY; without even the " +
-                        "implied warranty of MERCHANTABILITY or FITNESS FOR A " +
-                        "PARTICULAR PURPOSE. See the GNU General Public " +
-                        "License for more details.\n\n" +
-                        "The full license text is bundled with this app's " +
-                        "source code as /LICENSE, and at " +
-                        "https://www.gnu.org/licenses/gpl-3.0.html"
-                )
-
-                HorizontalDivider()
-
-                Text("Third-Party Notices", fontWeight = FontWeight.Bold)
-                Text(
-                    "Eruda (https://github.com/liriliri/eruda)\n" +
-                        "Copyright (c) 2016-present liriliri\n\n" +
-                        "Permission is hereby granted, free of charge, to any " +
-                        "person obtaining a copy of this software and " +
-                        "associated documentation files (the \"Software\"), to " +
-                        "deal in the Software without restriction, including " +
-                        "without limitation the rights to use, copy, modify, " +
-                        "merge, publish, distribute, sublicense, and/or sell " +
-                        "copies of the Software, subject to the following " +
-                        "conditions:\n\n" +
-                        "The above copyright notice and this permission " +
-                        "notice shall be included in all copies or " +
-                        "substantial portions of the Software.\n\n" +
-                        "THE SOFTWARE IS PROVIDED \"AS IS\", WITHOUT WARRANTY " +
-                        "OF ANY KIND, EXPRESS OR IMPLIED. See the MIT License " +
-                        "for full details."
-                )
+                Text("Version 1.0.0")
             }
         }
     )

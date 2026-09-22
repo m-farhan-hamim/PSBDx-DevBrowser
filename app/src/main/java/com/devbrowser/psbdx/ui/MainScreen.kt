@@ -81,7 +81,8 @@ import com.devbrowser.psbdx.webview.DevWebViewController
 @Composable
 fun MainScreen(
     viewModel: BrowserViewModel,
-    controller: DevWebViewController = remember { DevWebViewController() }
+    controller: DevWebViewController = remember { DevWebViewController() },
+    requestRuntimePermission: (String, (Boolean) -> Unit) -> Unit = { _, onResult -> onResult(false) }
 ) {
     var addressBarText by remember { mutableStateOf(viewModel.activeTab.url) }
     var loadProgress by remember { mutableStateOf(0) }
@@ -124,7 +125,10 @@ fun MainScreen(
                                 onValueChange = { addressBarText = it },
                                 modifier = Modifier.weight(1f),
                                 singleLine = true,
-                                placeholder = { Text("Search or type a URL") },
+                                textStyle = MaterialTheme.typography.bodyMedium,
+                                placeholder = {
+                                    Text("Search or type a URL", style = MaterialTheme.typography.bodyMedium)
+                                },
                                 trailingIcon = {
                                     IconButton(onClick = {
                                         if (isLoading) controller.stop() else controller.reload()
@@ -170,7 +174,8 @@ fun MainScreen(
                             },
                             onClearStorage = { showStorageClearConfirm = true },
                             onSettings = { viewModel.setSettingsDialogVisible(true) },
-                            onAbout = { viewModel.setAboutDialogVisible(true) }
+                            onAbout = { viewModel.setAboutDialogVisible(true) },
+                            onLicenses = { viewModel.setLicensesDialogVisible(true) }
                         )
                     }
                 )
@@ -206,6 +211,7 @@ fun MainScreen(
                 isApiBlockingEnabled = { viewModel.apiBlockingEnabled },
                 isThirdPartyCookiesAllowed = { host -> viewModel.isThirdPartyCookiesAllowed(host) },
                 isPermissionAllowed = { host, type -> viewModel.isPermissionAllowed(host, type) },
+                requestRuntimePermission = requestRuntimePermission,
                 modifier = Modifier.fillMaxSize()
             )
 
@@ -241,7 +247,17 @@ fun MainScreen(
     }
 
     if (viewModel.showAboutDialog) {
-        AboutDialog(onDismiss = { viewModel.setAboutDialogVisible(false) })
+        AboutDialog(
+            onDismiss = { viewModel.setAboutDialogVisible(false) },
+            onViewLicenses = {
+                viewModel.setAboutDialogVisible(false)
+                viewModel.setLicensesDialogVisible(true)
+            }
+        )
+    }
+
+    if (viewModel.showLicensesDialog) {
+        LicensesDialog(onDismiss = { viewModel.setLicensesDialogVisible(false) })
     }
 
     if (viewModel.showSettingsDialog) {
@@ -320,7 +336,8 @@ private fun BrowserOverflowMenu(
     onDesktopToggle: () -> Unit,
     onClearStorage: () -> Unit,
     onSettings: () -> Unit,
-    onAbout: () -> Unit
+    onAbout: () -> Unit,
+    onLicenses: () -> Unit
 ) {
     fun wrap(action: () -> Unit): () -> Unit = { action(); onDismiss() }
 
@@ -349,6 +366,7 @@ private fun BrowserOverflowMenu(
         DropdownMenuItem(text = { Text("Clear browsing data") }, onClick = wrap(onClearStorage))
         DropdownMenuItem(text = { Text("Settings") }, onClick = wrap(onSettings))
         DropdownMenuItem(text = { Text("About") }, onClick = wrap(onAbout))
+        DropdownMenuItem(text = { Text("Licenses") }, onClick = wrap(onLicenses))
     }
 }
 

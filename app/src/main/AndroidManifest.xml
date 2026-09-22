@@ -11,13 +11,17 @@
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
 
-    <!-- Requested only so the browser CAN grant a website's camera/mic/
-         location request when the user explicitly allows that specific
-         site from the address bar's site-info panel. Nothing is granted
-         to any site automatically; every origin starts fully blocked. -->
+    <!-- Requested at launch: precise location (browser geolocation
+         prompts) and, on Android 13+, notifications. -->
+    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+
+    <!-- Declared, but the OS permission dialog for these is only shown
+         lazily — the first time a site the user has explicitly allowed
+         (from the address bar's Site info panel) actually requests
+         camera/microphone access. Never requested at app launch. -->
     <uses-permission android:name="android.permission.CAMERA" />
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
-    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
     <uses-feature android:name="android.hardware.camera" android:required="false" />
     <uses-feature android:name="android.hardware.microphone" android:required="false" />
     <uses-feature android:name="android.hardware.location" android:required="false" />

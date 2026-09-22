@@ -223,6 +223,7 @@ fun DevWebView(
     isApiBlockingEnabled: () -> Boolean = { false },
     isThirdPartyCookiesAllowed: (String) -> Boolean = { false },
     isPermissionAllowed: (String, SitePermissionType) -> Boolean = { _, _ -> false },
+    requestRuntimePermission: (String, (Boolean) -> Unit) -> Unit = { _, onResult -> onResult(false) },
     modifier: Modifier = Modifier
 ) {
     val erudaClient = remember {
@@ -264,24 +265,61 @@ fun DevWebView(
                         onProgressChanged(newProgress)
                     }
 
+                    /**
+                     * Camera/microphone are never requested from the OS at app
+                     * launch. This callback only fires when a page actually
+                     * calls getUserMedia(), and even then the OS permission
+                     * dialog (requestRuntimePermission) is only triggered for
+                     * resources the user has already opted this specific site
+                     * into via the Site info panel — anything not opted in is
+                     * denied without any OS prompt at all.
+                     */
                     override fun onPermissionRequest(request: PermissionRequest) {
                         val host = request.origin.host
-                        val granted = if (host == null) {
-                            emptyArray<String>()
-                        } else {
-                            request.resources.filter { resource ->
-                                val type = when (resource) {
-                                    PermissionRequest.RESOURCE_VIDEO_CAPTURE -> SitePermissionType.CAMERA
-                                    PermissionRequest.RESOURCE_AUDIO_CAPTURE -> SitePermissionType.MICROPHONE
-                                    else -> null
-                                }
-                                type != null && isPermissionAllowed(host, type)
-                            }.toTypedArray()
-                        }
-                        if (granted.isNotEmpty()) {
-                            request.grant(granted)
-                        } else {
+                        if (host == null) {
                             request.deny()
+                            return
+                        }
+
+                        val approvedResources = request.resources.mapNotNull { resource ->
+                            val (type, osPermission) = when (resource) {
+                                PermissionRequest.RESOURCE_VIDEO_CAPTURE ->
+                                    SitePermissionType.CAMERA to android.Manifest.permission.CAMERA
+                                PermissionRequest.RESOURCE_AUDIO_CAPTURE ->
+                                    SitePermissionType.MICROPHONE to android.Manifest.permission.RECORD_AUDIO
+                                else -> return@mapNotNull null
+                            }
+                            if (isPermissionAllowed(host, type)) resource to osPermission else null
+                        }
+
+                        if (approvedResources.isEmpty()) {
+                            request.deny()
+                            return
+                        }
+
+                        val grantedResources = mutableListOf<String>()
+                        var remaining = approvedResources.size
+
+                        fun finish() {
+                            if (grantedResources.isEmpty()) request.deny() else request.grant(grantedResources.toTypedArray())
+                        }
+
+                        approvedResources.forEach { (resource, osPermission) ->
+                            val alreadyGranted = androidx.core.content.ContextCompat.checkSelfPermission(
+                                context, osPermission
+                            ) == android.content.pm.PackageManager.PERMISSION_GRANTED
+
+                            if (alreadyGranted) {
+                                grantedResources.add(resource)
+                                remaining--
+                                if (remaining == 0) finish()
+                            } else {
+                                requestRuntimePermission(osPermission) { granted ->
+                                    if (granted) grantedResources.add(resource)
+                                    remaining--
+                                    if (remaining == 0) finish()
+                                }
+                            }
                         }
                     }
 

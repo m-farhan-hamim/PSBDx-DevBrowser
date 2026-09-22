@@ -60,10 +60,12 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import com.devbrowser.psbdx.data.SitePermissionType
 import com.devbrowser.psbdx.viewmodel.BrowserViewModel
 import com.devbrowser.psbdx.viewmodel.DevPanel
@@ -85,6 +87,8 @@ fun MainScreen(
     requestRuntimePermission: (String, (Boolean) -> Unit) -> Unit = { _, onResult -> onResult(false) }
 ) {
     var addressBarText by remember { mutableStateOf(viewModel.activeTab.url) }
+    var pageTitle by remember { mutableStateOf(viewModel.activeTab.title) }
+    var isAddressFocused by remember { mutableStateOf(false) }
     var loadProgress by remember { mutableStateOf(0) }
     var showTabSwitcher by remember { mutableStateOf(false) }
     var showOverflowMenu by remember { mutableStateOf(false) }
@@ -97,6 +101,11 @@ fun MainScreen(
     val isLoading = loadProgress in 1..99
     val isHttps = currentUrl.startsWith("https://", ignoreCase = true)
     val currentHost = remember(currentUrl) { runCatching { Uri.parse(currentUrl).host }.getOrNull().orEmpty() }
+
+    // Shown text: the page title once loaded (Chrome-style), or the URL
+    // itself while loading / with no title yet. Tapping the field always
+    // switches it to the editable URL, per the trailing focus check below.
+    val addressDisplayValue = if (isAddressFocused) addressBarText else pageTitle.ifBlank { addressBarText }
 
     LaunchedEffect(currentUrl, bookmarks) {
         isBookmarked = bookmarks.any { it.url == currentUrl }
@@ -121,11 +130,15 @@ fun MainScreen(
                                 )
                             }
                             OutlinedTextField(
-                                value = addressBarText,
+                                value = addressDisplayValue,
                                 onValueChange = { addressBarText = it },
-                                modifier = Modifier.weight(1f),
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .onFocusChanged { isAddressFocused = it.isFocused },
                                 singleLine = true,
-                                textStyle = MaterialTheme.typography.bodyMedium,
+                                textStyle = MaterialTheme.typography.bodyMedium.copy(
+                                    fontSize = addressBarFontSize(addressDisplayValue)
+                                ),
                                 placeholder = {
                                     Text("Search or type a URL", style = MaterialTheme.typography.bodyMedium)
                                 },
@@ -195,11 +208,13 @@ fun MainScreen(
                 onPageStarted = { url ->
                     addressBarText = url
                     currentUrl = url
+                    pageTitle = ""
                     canGoBack = controller.canGoBack()
                 },
                 onPageFinished = { url, title ->
                     addressBarText = url
                     currentUrl = url
+                    pageTitle = title
                     canGoBack = controller.canGoBack()
                     viewModel.updateActiveTab(url = url, title = title)
                     viewModel.recordVisit(url, title)
@@ -535,6 +550,22 @@ private fun TabSwitcherOverlay(viewModel: BrowserViewModel, onDismiss: () -> Uni
                 }
             }
         }
+    }
+}
+
+/**
+ * Scales the address bar's font down as the shown text (title or URL)
+ * gets longer, so long page titles or URLs still fit on one line on a
+ * narrow phone screen instead of being truncated too aggressively.
+ */
+private fun addressBarFontSize(text: String): androidx.compose.ui.unit.TextUnit {
+    val length = text.length
+    return when {
+        length <= 25 -> 15.sp
+        length <= 40 -> 14.sp
+        length <= 60 -> 13.sp
+        length <= 90 -> 12.sp
+        else -> 11.sp
     }
 }
 

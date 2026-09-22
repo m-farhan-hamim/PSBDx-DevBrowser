@@ -1,0 +1,9 @@
+<resources>
+    <!--
+        This is a minimal system theme applied before Compose takes over via
+        setContent { PSBDxDevBrowserTheme { ... } } in MainActivity. All real
+        color/typography theming (including Material You dynamic color and
+        light/dark switching) is handled by PSBDxDevBrowserTheme in Kotlin.
+    -->
+    <style name="Theme.PSBDxDevBrowser" parent="android:Theme.Material.Light.NoActionBar" />
+</resources>

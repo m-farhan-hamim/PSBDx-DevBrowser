@@ -18,6 +18,9 @@ import com.devbrowser.psbdx.data.AppDatabase
 import com.devbrowser.psbdx.data.BookmarkEntity
 import com.devbrowser.psbdx.data.HistoryEntity
 import com.devbrowser.psbdx.data.JsSnippetEntity
+import com.devbrowser.psbdx.data.SearchEngineId
+import com.devbrowser.psbdx.data.SettingsRepository
+import com.devbrowser.psbdx.data.SitePermissionType
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.stateIn
@@ -41,7 +44,8 @@ sealed interface DevPanel {
 }
 
 class BrowserViewModel(
-    private val database: AppDatabase
+    private val database: AppDatabase,
+    private val settingsRepository: SettingsRepository
 ) : ViewModel() {
 
     // ---------------------------------------------------------------
@@ -86,7 +90,8 @@ class BrowserViewModel(
     }
 
     // ---------------------------------------------------------------
-    // Dev tools panel state
+    // Dev tools panel state (opened from the overflow menu now, not a
+    // permanent bottom bar, so the WebView keeps the full viewport)
     // ---------------------------------------------------------------
     var activePanel by mutableStateOf<DevPanel>(DevPanel.None)
         private set
@@ -96,7 +101,7 @@ class BrowserViewModel(
     }
 
     // ---------------------------------------------------------------
-    // Address bar / dialogs
+    // Dialogs
     // ---------------------------------------------------------------
     var showAboutDialog by mutableStateOf(false)
         private set
@@ -105,11 +110,62 @@ class BrowserViewModel(
         showAboutDialog = visible
     }
 
+    var showSettingsDialog by mutableStateOf(false)
+        private set
+
+    fun setSettingsDialogVisible(visible: Boolean) {
+        showSettingsDialog = visible
+    }
+
+    var showSiteInfoDialog by mutableStateOf(false)
+        private set
+
+    fun setSiteInfoDialogVisible(visible: Boolean) {
+        showSiteInfoDialog = visible
+    }
+
     var lastLoadedSourceHtml by mutableStateOf("")
         private set
 
     fun updateLastLoadedSourceHtml(html: String) {
         lastLoadedSourceHtml = html
+    }
+
+    // ---------------------------------------------------------------
+    // Settings: default search engine + "block API requests" dev toggle
+    // ---------------------------------------------------------------
+    var searchEngine by mutableStateOf(settingsRepository.getSearchEngine())
+        private set
+
+    fun setSearchEngine(engine: SearchEngineId) {
+        searchEngine = engine
+        settingsRepository.setSearchEngine(engine)
+    }
+
+    var apiBlockingEnabled by mutableStateOf(settingsRepository.isApiBlockingEnabled())
+        private set
+
+    fun setApiBlockingEnabled(enabled: Boolean) {
+        apiBlockingEnabled = enabled
+        settingsRepository.setApiBlockingEnabled(enabled)
+    }
+
+    // ---------------------------------------------------------------
+    // Per-site privacy & permissions (surfaced from the address-bar
+    // lock/warning icon's site-info panel)
+    // ---------------------------------------------------------------
+    fun isThirdPartyCookiesAllowed(host: String): Boolean =
+        settingsRepository.isThirdPartyCookiesAllowed(host)
+
+    fun setThirdPartyCookiesAllowed(host: String, allowed: Boolean) {
+        settingsRepository.setThirdPartyCookiesAllowed(host, allowed)
+    }
+
+    fun isPermissionAllowed(host: String, type: SitePermissionType): Boolean =
+        settingsRepository.isPermissionAllowed(host, type)
+
+    fun setPermissionAllowed(host: String, type: SitePermissionType, allowed: Boolean) {
+        settingsRepository.setPermissionAllowed(host, type, allowed)
     }
 
     // ---------------------------------------------------------------
@@ -163,11 +219,14 @@ class BrowserViewModel(
         viewModelScope.launch { database.jsSnippetDao().delete(snippet) }
     }
 
-    class Factory(private val database: AppDatabase) : ViewModelProvider.Factory {
+    class Factory(
+        private val database: AppDatabase,
+        private val settingsRepository: SettingsRepository
+    ) : ViewModelProvider.Factory {
         @Suppress("UNCHECKED_CAST")
         override fun <T : ViewModel> create(modelClass: Class<T>): T {
             require(modelClass.isAssignableFrom(BrowserViewModel::class.java))
-            return BrowserViewModel(database) as T
+            return BrowserViewModel(database, settingsRepository) as T
         }
     }
 }

@@ -3,12 +3,41 @@
 A developer-focused Android browser (Kotlin + Jetpack Compose, Material 3)
 that injects [Eruda](https://github.com/liriliri/eruda) into any web page
 for an on-device console, DOM inspector, network logger, and script
-runner — plus a source viewer, snippet manager, one-tap storage cleaner,
-and element picker on top of that.
+runner — plus a source viewer, snippet manager, storage cleaner, and
+element picker, all tucked into a Chrome-style toolbar so the page keeps
+the full viewport (no permanent bottom bar).
 
 - **License:** GPLv3 (see `LICENSE`)
 - **Package:** `com.devbrowser.psbdx`
 - **Min/Target SDK:** 24 / 34
+
+## UI & privacy features
+
+- **Chrome-style toolbar only.** A single top bar (security icon, address
+  bar, tab count, three-dot menu) — no bottom bar, so small mobile
+  viewports aren't squeezed further. Every dev tool and setting lives in
+  the overflow menu next to the tab-count button.
+- **Security indicator.** The address bar shows a lock icon for HTTPS or
+  a warning icon for HTTP. Tapping it opens **Site info**: connection
+  status, a "delete cookies for this site" action, a per-site
+  third-party-cookies toggle (blocked by default), and per-site
+  Camera/Microphone/Location toggles (denied by default).
+- **Default search engine.** Settings (from the overflow menu) lets you
+  pick Google (default), DuckDuckGo, Bing, or Brave Search, each shown
+  with a plain colored-monogram icon rather than a trademarked logo.
+- **Block API requests toggle.** Also in Settings — when enabled, it
+  patches `fetch()` and `XMLHttpRequest` on every page so REST/API calls
+  a site makes are rejected before they reach the network. Normal page
+  loads, images, scripts and styles are unaffected.
+- **Third-party cookies blocked by default**, everywhere, unless you
+  explicitly allow them for one specific site from that site's info
+  panel.
+- **PWA misdetection fix.** The mobile user agent is a standard
+  Chrome-for-Android string with the "; wv" WebView marker removed. Many
+  sites use that token to guess they're being shown inside an installed
+  PWA/TWA wrapper; since this app provides its own full browser chrome
+  rather than a bare app shell, presenting a normal browser UA avoids
+  that misdetection.
 
 ## Eruda bundle
 
@@ -75,21 +104,30 @@ never fails on a fork without secrets):
 
 - No Google Play Services, Firebase, Crashlytics, AdMob, or other
   proprietary SDKs anywhere in the dependency graph.
-- Only two permissions requested: `INTERNET` and `ACCESS_NETWORK_STATE`.
+- Permissions: `INTERNET` / `ACCESS_NETWORK_STATE` for browsing, plus
+  `CAMERA` / `RECORD_AUDIO` / `ACCESS_FINE_LOCATION` so the browser is
+  *able* to grant a website's camera/mic/location request — but nothing
+  is ever auto-granted. Every origin starts fully denied for all three
+  until the user explicitly allows that specific site from the
+  address bar's Site info panel.
 - Eruda is bundled as a local asset (`assets/eruda.min.js`, MIT header
   intact) and evaluated in-page; the app never fetches executable JS
   from a remote CDN at runtime.
-- No analytics, telemetry, or tracking of any kind.
+- No analytics, telemetry, or tracking of any kind. The only persisted
+  data (bookmarks, history, snippets, and the settings described above)
+  stays in the app's local Room database / SharedPreferences.
 
 ## Project structure
 
 ```
 app/src/main/java/com/devbrowser/psbdx/
-├── MainActivity.kt
+├── MainActivity.kt                 # Entry point; requests site-permission OS grants once
 ├── DevBrowserApplication.kt
-├── data/AppDatabase.kt            # Room: bookmarks, history, JS snippets
-├── viewmodel/BrowserViewModel.kt  # MVVM state holder
-├── webview/DevWebView.kt          # Compose WebView wrapper + controller
-├── webview/ErudaWebClient.kt      # Injects assets/eruda.min.js
-└── ui/MainScreen.kt, AboutDialog.kt
+├── data/AppDatabase.kt              # Room: bookmarks, history, JS snippets
+├── data/SettingsRepository.kt       # SharedPreferences: search engine, API blocking,
+│                                     # per-site third-party cookies & permissions
+├── viewmodel/BrowserViewModel.kt    # MVVM state holder
+├── webview/DevWebView.kt            # Compose WebView wrapper + controller (UA, cookies, perms)
+├── webview/ErudaWebClient.kt        # Injects assets/eruda.min.js + API-block shim per navigation
+└── ui/MainScreen.kt, AboutDialog.kt, SettingsDialog.kt, SiteInfoDialog.kt
 ```

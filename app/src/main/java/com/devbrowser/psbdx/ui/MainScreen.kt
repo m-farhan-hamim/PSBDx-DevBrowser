@@ -8,6 +8,8 @@
  */
 package com.devbrowser.psbdx.ui
 
+import android.net.Uri
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -26,20 +28,18 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.ArrowBack
-import androidx.compose.material.icons.filled.ArrowForward
-import androidx.compose.material.icons.filled.BookmarkBorder
-import androidx.compose.material.icons.filled.Close
-import androidx.compose.material.icons.filled.Code
-import androidx.compose.material.icons.filled.DeleteSweep
-import androidx.compose.material.icons.filled.DesktopWindows
 import androidx.compose.material.icons.filled.Add
-import androidx.compose.material.icons.filled.Info
+import androidx.compose.material.icons.filled.BookmarkAdd
+import androidx.compose.material.icons.filled.BookmarkRemove
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Lock
+import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Refresh
-import androidx.compose.material.icons.filled.Terminal
-import androidx.compose.material.icons.filled.TouchApp
+import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -52,6 +52,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -59,18 +60,22 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.dp
+import com.devbrowser.psbdx.data.SitePermissionType
 import com.devbrowser.psbdx.viewmodel.BrowserViewModel
 import com.devbrowser.psbdx.viewmodel.DevPanel
 import com.devbrowser.psbdx.webview.DevWebView
 import com.devbrowser.psbdx.webview.DevWebViewController
 
 /**
- * Root composable: address bar, WebView, multi-tab switcher, and the
- * developer-tools bottom bar (Eruda toggle, source viewer, snippet
- * runner, network inspector, element picker, storage cleaner).
+ * Root composable, laid out Chrome-style: a single top toolbar holding a
+ * security icon, the address bar, the tab-count button, and a three-dot
+ * overflow menu carrying every developer tool and setting. There is
+ * deliberately no bottom bar — on a small mobile viewport, every extra
+ * row of chrome is a row the web page doesn't get.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -81,67 +86,101 @@ fun MainScreen(
     var addressBarText by remember { mutableStateOf(viewModel.activeTab.url) }
     var loadProgress by remember { mutableStateOf(0) }
     var showTabSwitcher by remember { mutableStateOf(false) }
+    var showOverflowMenu by remember { mutableStateOf(false) }
     var showStorageClearConfirm by remember { mutableStateOf(false) }
+    var canGoBack by remember { mutableStateOf(false) }
+    var currentUrl by remember { mutableStateOf(viewModel.activeTab.url) }
+    var isBookmarked by remember { mutableStateOf(false) }
+
+    val bookmarks by viewModel.bookmarks.collectAsState()
+    val isLoading = loadProgress in 1..99
+    val isHttps = currentUrl.startsWith("https://", ignoreCase = true)
+    val currentHost = remember(currentUrl) { runCatching { Uri.parse(currentUrl).host }.getOrNull().orEmpty() }
+
+    LaunchedEffect(currentUrl, bookmarks) {
+        isBookmarked = bookmarks.any { it.url == currentUrl }
+    }
+
+    // System/gesture back navigates the WebView history first, and only
+    // falls through to the default activity-finish behavior once there's
+    // nowhere left to go back to.
+    BackHandler(enabled = canGoBack) { controller.goBack() }
 
     Scaffold(
         topBar = {
             Column {
                 TopAppBar(
                     title = {
-                        OutlinedTextField(
-                            value = addressBarText,
-                            onValueChange = { addressBarText = it },
-                            modifier = Modifier.fillMaxWidth(),
-                            singleLine = true,
-                            placeholder = { Text("Search or type a URL") },
-                            keyboardOptions = KeyboardOptions(imeAction = ImeAction.Go),
-                            keyboardActions = KeyboardActions(onGo = {
-                                controller.loadUrl(addressBarText)
-                            })
-                        )
-                    },
-                    navigationIcon = {
-                        IconButton(onClick = { controller.goBack() }) {
-                            Icon(Icons.Filled.ArrowBack, contentDescription = "Back")
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            IconButton(onClick = { viewModel.setSiteInfoDialogVisible(true) }) {
+                                Icon(
+                                    if (isHttps) Icons.Filled.Lock else Icons.Filled.Warning,
+                                    contentDescription = if (isHttps) "Secure connection" else "Not secure",
+                                    tint = if (isHttps) Color(0xFF2E7D32) else Color(0xFFC62828)
+                                )
+                            }
+                            OutlinedTextField(
+                                value = addressBarText,
+                                onValueChange = { addressBarText = it },
+                                modifier = Modifier.weight(1f),
+                                singleLine = true,
+                                placeholder = { Text("Search or type a URL") },
+                                trailingIcon = {
+                                    IconButton(onClick = {
+                                        if (isLoading) controller.stop() else controller.reload()
+                                    }) {
+                                        Icon(
+                                            if (isLoading) Icons.Filled.Close else Icons.Filled.Refresh,
+                                            contentDescription = if (isLoading) "Stop" else "Reload"
+                                        )
+                                    }
+                                },
+                                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Go),
+                                keyboardActions = KeyboardActions(onGo = {
+                                    controller.loadUrl(addressBarText, viewModel.searchEngine.urlTemplate)
+                                })
+                            )
                         }
                     },
                     actions = {
-                        IconButton(onClick = { controller.goForward() }) {
-                            Icon(Icons.Filled.ArrowForward, contentDescription = "Forward")
+                        TextButton(onClick = { showTabSwitcher = true }) {
+                            Text("${viewModel.tabs.size}")
                         }
-                        IconButton(onClick = { controller.reload() }) {
-                            Icon(Icons.Filled.Refresh, contentDescription = "Reload")
+                        IconButton(onClick = { showOverflowMenu = true }) {
+                            Icon(Icons.Filled.MoreVert, contentDescription = "Menu")
                         }
-                        IconButton(onClick = {
-                            viewModel.toggleBookmark(viewModel.activeTab.url, viewModel.activeTab.title)
-                        }) {
-                            Icon(Icons.Filled.BookmarkBorder, contentDescription = "Bookmark")
-                        }
-                        IconButton(onClick = { showTabSwitcher = true }) {
-                            Text("${viewModel.tabs.size}", modifier = Modifier.padding(end = 8.dp))
-                        }
+                        BrowserOverflowMenu(
+                            expanded = showOverflowMenu,
+                            onDismiss = { showOverflowMenu = false },
+                            isBookmarked = isBookmarked,
+                            isDesktopMode = controller.isDesktopMode,
+                            onNewTab = { viewModel.openNewTab() },
+                            onToggleBookmark = { viewModel.toggleBookmark(currentUrl, viewModel.activeTab.title) },
+                            onBack = { controller.goBack() },
+                            onForward = { controller.goForward() },
+                            onReload = { controller.reload() },
+                            onEruda = { controller.toggleEruda() },
+                            onSourceViewer = { viewModel.showPanel(DevPanel.SourceViewer) },
+                            onSnippetRunner = { viewModel.showPanel(DevPanel.SnippetRunner) },
+                            onNetworkInspector = { viewModel.showPanel(DevPanel.NetworkInspector) },
+                            onElementPicker = { viewModel.showPanel(DevPanel.ElementPicker) },
+                            onDesktopToggle = {
+                                controller.toggleDesktopMode()
+                                viewModel.updateActiveTab(desktopMode = controller.isDesktopMode)
+                            },
+                            onClearStorage = { showStorageClearConfirm = true },
+                            onSettings = { viewModel.setSettingsDialogVisible(true) },
+                            onAbout = { viewModel.setAboutDialogVisible(true) }
+                        )
                     }
                 )
-                if (loadProgress in 1..99) {
+                if (isLoading) {
                     LinearProgressIndicator(
                         progress = { loadProgress / 100f },
                         modifier = Modifier.fillMaxWidth()
                     )
                 }
             }
-        },
-        bottomBar = {
-            DevToolsBottomBar(
-                activePanel = viewModel.activePanel,
-                onPanelSelected = { viewModel.showPanel(it) },
-                onEruda = { controller.toggleEruda() },
-                onClearStorage = { showStorageClearConfirm = true },
-                onAbout = { viewModel.setAboutDialogVisible(true) },
-                onDesktopToggle = {
-                    controller.toggleDesktopMode()
-                    viewModel.updateActiveTab(desktopMode = controller.isDesktopMode)
-                }
-            )
         }
     ) { padding ->
         Box(modifier = Modifier.padding(padding).fillMaxSize()) {
@@ -150,9 +189,13 @@ fun MainScreen(
                 startUrl = viewModel.activeTab.url,
                 onPageStarted = { url ->
                     addressBarText = url
+                    currentUrl = url
+                    canGoBack = controller.canGoBack()
                 },
                 onPageFinished = { url, title ->
                     addressBarText = url
+                    currentUrl = url
+                    canGoBack = controller.canGoBack()
                     viewModel.updateActiveTab(url = url, title = title)
                     viewModel.recordVisit(url, title)
                     controller.webView?.evaluateJavascript(
@@ -160,6 +203,9 @@ fun MainScreen(
                     ) { html -> viewModel.updateLastLoadedSourceHtml(html ?: "") }
                 },
                 onProgressChanged = { loadProgress = it },
+                isApiBlockingEnabled = { viewModel.apiBlockingEnabled },
+                isThirdPartyCookiesAllowed = { host -> viewModel.isThirdPartyCookiesAllowed(host) },
+                isPermissionAllowed = { host, type -> viewModel.isPermissionAllowed(host, type) },
                 modifier = Modifier.fillMaxSize()
             )
 
@@ -198,6 +244,38 @@ fun MainScreen(
         AboutDialog(onDismiss = { viewModel.setAboutDialogVisible(false) })
     }
 
+    if (viewModel.showSettingsDialog) {
+        SettingsDialog(
+            currentEngine = viewModel.searchEngine,
+            onEngineSelected = { viewModel.setSearchEngine(it) },
+            apiBlockingEnabled = viewModel.apiBlockingEnabled,
+            onApiBlockingToggle = {
+                viewModel.setApiBlockingEnabled(it)
+                controller.setApiBlockingEnabled(it)
+            },
+            onDismiss = { viewModel.setSettingsDialogVisible(false) }
+        )
+    }
+
+    if (viewModel.showSiteInfoDialog) {
+        val permissionStates = SitePermissionType.entries.map { type ->
+            type to viewModel.isPermissionAllowed(currentHost, type)
+        }
+        SiteInfoDialog(
+            host = currentHost,
+            isHttps = isHttps,
+            thirdPartyCookiesAllowed = viewModel.isThirdPartyCookiesAllowed(currentHost),
+            onThirdPartyCookiesToggle = { allowed ->
+                viewModel.setThirdPartyCookiesAllowed(currentHost, allowed)
+                controller.reload()
+            },
+            permissionStates = permissionStates,
+            onPermissionToggle = { type, allowed -> viewModel.setPermissionAllowed(currentHost, type, allowed) },
+            onDeleteCookies = { controller.deleteCookiesForCurrentSite() },
+            onDismiss = { viewModel.setSiteInfoDialogVisible(false) }
+        )
+    }
+
     if (showStorageClearConfirm) {
         AlertDialog(
             onDismissRequest = { showStorageClearConfirm = false },
@@ -217,47 +295,60 @@ fun MainScreen(
     }
 }
 
+/**
+ * The three-dot overflow menu, opened from the toolbar next to the tab
+ * count button. Every developer tool and browser setting that used to
+ * live in a permanent bottom bar now lives here instead, so the page
+ * keeps the full viewport height.
+ */
 @Composable
-private fun DevToolsBottomBar(
-    activePanel: DevPanel,
-    onPanelSelected: (DevPanel) -> Unit,
+private fun BrowserOverflowMenu(
+    expanded: Boolean,
+    onDismiss: () -> Unit,
+    isBookmarked: Boolean,
+    isDesktopMode: Boolean,
+    onNewTab: () -> Unit,
+    onToggleBookmark: () -> Unit,
+    onBack: () -> Unit,
+    onForward: () -> Unit,
+    onReload: () -> Unit,
     onEruda: () -> Unit,
+    onSourceViewer: () -> Unit,
+    onSnippetRunner: () -> Unit,
+    onNetworkInspector: () -> Unit,
+    onElementPicker: () -> Unit,
+    onDesktopToggle: () -> Unit,
     onClearStorage: () -> Unit,
-    onAbout: () -> Unit,
-    onDesktopToggle: () -> Unit
+    onSettings: () -> Unit,
+    onAbout: () -> Unit
 ) {
-    Surface(tonalElevation = 3.dp) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 4.dp, vertical = 4.dp),
-            horizontalArrangement = Arrangement.SpaceEvenly
-        ) {
-            IconButton(onClick = onEruda) {
-                Icon(Icons.Filled.Terminal, contentDescription = "Toggle Eruda console")
-            }
-            IconButton(onClick = { onPanelSelected(DevPanel.SourceViewer) }) {
-                Icon(Icons.Filled.Code, contentDescription = "View source")
-            }
-            IconButton(onClick = { onPanelSelected(DevPanel.SnippetRunner) }) {
-                Icon(Icons.Filled.Add, contentDescription = "JS snippet runner")
-            }
-            IconButton(onClick = { onPanelSelected(DevPanel.NetworkInspector) }) {
-                Icon(Icons.Filled.Refresh, contentDescription = "Network inspector")
-            }
-            IconButton(onClick = { onPanelSelected(DevPanel.ElementPicker) }) {
-                Icon(Icons.Filled.TouchApp, contentDescription = "Element picker")
-            }
-            IconButton(onClick = onDesktopToggle) {
-                Icon(Icons.Filled.DesktopWindows, contentDescription = "Toggle desktop mode")
-            }
-            IconButton(onClick = onClearStorage) {
-                Icon(Icons.Filled.DeleteSweep, contentDescription = "Clear storage")
-            }
-            IconButton(onClick = onAbout) {
-                Icon(Icons.Filled.Info, contentDescription = "About")
-            }
-        }
+    fun wrap(action: () -> Unit): () -> Unit = { action(); onDismiss() }
+
+    DropdownMenu(expanded = expanded, onDismissRequest = onDismiss) {
+        DropdownMenuItem(text = { Text("New tab") }, leadingIcon = { Icon(Icons.Filled.Add, null) }, onClick = wrap(onNewTab))
+        DropdownMenuItem(
+            text = { Text(if (isBookmarked) "Remove bookmark" else "Add bookmark") },
+            leadingIcon = { Icon(if (isBookmarked) Icons.Filled.BookmarkRemove else Icons.Filled.BookmarkAdd, null) },
+            onClick = wrap(onToggleBookmark)
+        )
+        androidx.compose.material3.HorizontalDivider()
+        DropdownMenuItem(text = { Text("Back") }, onClick = wrap(onBack))
+        DropdownMenuItem(text = { Text("Forward") }, onClick = wrap(onForward))
+        DropdownMenuItem(text = { Text("Reload") }, onClick = wrap(onReload))
+        androidx.compose.material3.HorizontalDivider()
+        DropdownMenuItem(text = { Text("Eruda console") }, onClick = wrap(onEruda))
+        DropdownMenuItem(text = { Text("View page source") }, onClick = wrap(onSourceViewer))
+        DropdownMenuItem(text = { Text("JS snippet runner") }, onClick = wrap(onSnippetRunner))
+        DropdownMenuItem(text = { Text("Network inspector") }, onClick = wrap(onNetworkInspector))
+        DropdownMenuItem(text = { Text("Element picker") }, onClick = wrap(onElementPicker))
+        DropdownMenuItem(
+            text = { Text(if (isDesktopMode) "Switch to mobile site" else "Desktop site") },
+            onClick = wrap(onDesktopToggle)
+        )
+        androidx.compose.material3.HorizontalDivider()
+        DropdownMenuItem(text = { Text("Clear browsing data") }, onClick = wrap(onClearStorage))
+        DropdownMenuItem(text = { Text("Settings") }, onClick = wrap(onSettings))
+        DropdownMenuItem(text = { Text("About") }, onClick = wrap(onAbout))
     }
 }
 
@@ -315,7 +406,7 @@ private fun SnippetRunnerPanel(
                     ) {
                         Text(snippet.name, modifier = Modifier.weight(1f))
                         IconButton(onClick = { onRun(snippet.code) }) {
-                            Icon(Icons.Filled.Terminal, contentDescription = "Run ${snippet.name}")
+                            Icon(Icons.Filled.Refresh, contentDescription = "Run ${snippet.name}")
                         }
                         IconButton(onClick = { onDelete(snippet) }) {
                             Icon(Icons.Filled.Close, contentDescription = "Delete ${snippet.name}")
@@ -332,8 +423,8 @@ private fun NetworkInspectorPanel(onClose: () -> Unit) {
     PanelScaffold(title = "Network Inspector", onClose = onClose) {
         Text(
             "Live XHR / Fetch requests are captured by the injected Eruda " +
-                "console's Network panel — tap the terminal icon to open it " +
-                "for full headers, payloads, and response previews.",
+                "console's Network panel — open Eruda from the menu for full " +
+                "headers, payloads, and response previews.",
             modifier = Modifier.padding(12.dp)
         )
     }

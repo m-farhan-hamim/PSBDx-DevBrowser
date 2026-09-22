@@ -8,10 +8,12 @@
  */
 package com.devbrowser.psbdx
 
+import android.Manifest
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
@@ -28,9 +30,26 @@ import com.devbrowser.psbdx.viewmodel.BrowserViewModel
 
 class MainActivity : ComponentActivity() {
 
+    // Requests the OS-level permissions a website might ask for (camera,
+    // microphone, precise location). Nothing is granted to any site just
+    // because the OS permission is granted here — every site still starts
+    // fully blocked until the user explicitly allows it from that site's
+    // site-info panel (tap the lock/warning icon in the address bar).
+    private val requestSitePermissions = registerForActivityResult(
+        ActivityResultContracts.RequestMultiplePermissions()
+    ) { /* no-op: WebChromeClient re-checks actual OS grants at request time */ }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
+
+        requestSitePermissions.launch(
+            arrayOf(
+                Manifest.permission.CAMERA,
+                Manifest.permission.RECORD_AUDIO,
+                Manifest.permission.ACCESS_FINE_LOCATION
+            )
+        )
 
         val app = application as DevBrowserApplication
 
@@ -38,7 +57,7 @@ class MainActivity : ComponentActivity() {
             PSBDxDevBrowserTheme {
                 Surface(modifier = Modifier) {
                     val viewModel: BrowserViewModel = viewModel(
-                        factory = BrowserViewModel.Factory(app.database)
+                        factory = BrowserViewModel.Factory(app.database, app.settingsRepository)
                     )
                     MainScreen(viewModel = viewModel)
                 }

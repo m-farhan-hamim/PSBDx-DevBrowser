@@ -9,12 +9,17 @@
 package com.devbrowser.psbdx.webview
 
 import android.graphics.Bitmap
+import android.net.Uri
+import android.webkit.CookieManager
 import android.webkit.WebView
 import android.webkit.WebViewClient
 
 /**
- * A [WebViewClient] responsible for injecting the locally-bundled Eruda.js
- * developer console into every page the user navigates to.
+ * A [WebViewClient] responsible for:
+ *  - injecting the locally-bundled Eruda.js developer console into every
+ *    page the user navigates to;
+ *  - installing the opt-in REST API (fetch/XHR) request blocker;
+ *  - applying the per-site third-party-cookie policy on every navigation.
  *
  * Eruda is read from `app/src/main/assets/eruda.min.js` — it is never
  * downloaded from a remote CDN at runtime, satisfying the F-Droid
@@ -30,7 +35,9 @@ import android.webkit.WebViewClient
  */
 class ErudaWebClient(
     private val onPageStarted: (String) -> Unit,
-    private val onPageFinished: (String, String) -> Unit
+    private val onPageFinished: (String, String) -> Unit,
+    private val isApiBlockingEnabled: () -> Boolean,
+    private val isThirdPartyCookiesAllowed: (String) -> Boolean
 ) : WebViewClient() {
 
     private var erudaSource: String? = null
@@ -38,16 +45,31 @@ class ErudaWebClient(
     override fun onPageStarted(view: WebView, url: String, favicon: Bitmap?) {
         super.onPageStarted(view, url, favicon)
         onPageStarted(url)
+        applyThirdPartyCookiePolicy(view, url)
         injectEruda(view)
+        injectApiBlocker(view)
     }
 
     override fun onPageFinished(view: WebView, url: String) {
         super.onPageFinished(view, url)
         injectEruda(view)
+        injectApiBlocker(view)
         view.evaluateJavascript("document.title") { rawTitle ->
             val title = rawTitle?.trim('"').orEmpty().ifBlank { url }
             onPageFinished(url, title)
         }
+    }
+
+    /**
+     * Third-party cookies are blocked for every site by default; the user
+     * can allow them for a specific host from the site-info panel (tap
+     * the lock/warning icon in the address bar). Re-applied on every
+     * navigation since [android.webkit.CookieManager]'s setting is not
+     * itself host-scoped.
+     */
+    private fun applyThirdPartyCookiePolicy(view: WebView, url: String) {
+        val host = runCatching { Uri.parse(url).host }.getOrNull() ?: return
+        CookieManager.getInstance().setAcceptThirdPartyCookies(view, isThirdPartyCookiesAllowed(host))
     }
 
     /**
@@ -71,6 +93,13 @@ class ErudaWebClient(
             )
             append("})();")
         }
+        view.evaluateJavascript(script, null)
+    }
+
+    /** Installs (once per page) and toggles the fetch/XHR blocking shim. */
+    private fun injectApiBlocker(view: WebView) {
+        val script = DevWebViewController.API_BLOCK_INIT_JS +
+            "window.__psbdxBlockApi = ${isApiBlockingEnabled()};"
         view.evaluateJavascript(script, null)
     }
 

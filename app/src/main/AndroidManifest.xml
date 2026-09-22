@@ -7,11 +7,20 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:tools="http://schemas.android.com/tools">
 
-    <!-- Only permission required: loading web pages in the WebView.
-         No location, contacts, storage-wide, or analytics permissions
-         are requested, in line with F-Droid anti-feature guidelines. -->
+    <!-- Base network permission: loading web pages in the WebView. -->
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+
+    <!-- Requested only so the browser CAN grant a website's camera/mic/
+         location request when the user explicitly allows that specific
+         site from the address bar's site-info panel. Nothing is granted
+         to any site automatically; every origin starts fully blocked. -->
+    <uses-permission android:name="android.permission.CAMERA" />
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
+    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
+    <uses-feature android:name="android.hardware.camera" android:required="false" />
+    <uses-feature android:name="android.hardware.microphone" android:required="false" />
+    <uses-feature android:name="android.hardware.location" android:required="false" />
 
     <application
         android:name=".DevBrowserApplication"

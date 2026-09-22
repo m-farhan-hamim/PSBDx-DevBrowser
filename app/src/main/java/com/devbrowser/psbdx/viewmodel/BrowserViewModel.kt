@@ -108,7 +108,7 @@ class BrowserViewModel(
     var lastLoadedSourceHtml by mutableStateOf("")
         private set
 
-    fun setLastLoadedSourceHtml(html: String) {
+    fun updateLastLoadedSourceHtml(html: String) {
         lastLoadedSourceHtml = html
     }
 

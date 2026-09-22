@@ -157,7 +157,7 @@ fun MainScreen(
                     viewModel.recordVisit(url, title)
                     controller.webView?.evaluateJavascript(
                         "document.documentElement.outerHTML"
-                    ) { html -> viewModel.setLastLoadedSourceHtml(html ?: "") }
+                    ) { html -> viewModel.updateLastLoadedSourceHtml(html ?: "") }
                 },
                 onProgressChanged = { loadProgress = it },
                 modifier = Modifier.fillMaxSize()

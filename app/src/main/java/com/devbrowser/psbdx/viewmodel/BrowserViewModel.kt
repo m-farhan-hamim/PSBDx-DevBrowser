@@ -137,7 +137,7 @@ class BrowserViewModel(
     var searchEngine by mutableStateOf(settingsRepository.getSearchEngine())
         private set
 
-    fun setSearchEngine(engine: SearchEngineId) {
+    fun updateSearchEngine(engine: SearchEngineId) {
         searchEngine = engine
         settingsRepository.setSearchEngine(engine)
     }
@@ -145,7 +145,7 @@ class BrowserViewModel(
     var apiBlockingEnabled by mutableStateOf(settingsRepository.isApiBlockingEnabled())
         private set
 
-    fun setApiBlockingEnabled(enabled: Boolean) {
+    fun updateApiBlockingEnabled(enabled: Boolean) {
         apiBlockingEnabled = enabled
         settingsRepository.setApiBlockingEnabled(enabled)
     }

@@ -247,11 +247,11 @@ fun MainScreen(
     if (viewModel.showSettingsDialog) {
         SettingsDialog(
             currentEngine = viewModel.searchEngine,
-            onEngineSelected = { viewModel.setSearchEngine(it) },
+            onEngineSelected = { viewModel.updateSearchEngine(it) },
             apiBlockingEnabled = viewModel.apiBlockingEnabled,
             onApiBlockingToggle = {
-                viewModel.setApiBlockingEnabled(it)
-                controller.setApiBlockingEnabled(it)
+                viewModel.updateApiBlockingEnabled(it)
+                controller.updateApiBlockingEnabled(it)
             },
             onDismiss = { viewModel.setSettingsDialogVisible(false) }
         )

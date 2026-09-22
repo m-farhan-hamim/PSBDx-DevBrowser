@@ -108,7 +108,7 @@ class DevWebViewController {
     }
 
     /** Enables or disables the "block REST API requests" developer toggle for the active page. */
-    fun setApiBlockingEnabled(enabled: Boolean) {
+    fun updateApiBlockingEnabled(enabled: Boolean) {
         isApiBlockingEnabled = enabled
         webView?.evaluateJavascript("window.__psbdxBlockApi = $enabled;", null)
     }
@@ -297,7 +297,7 @@ fun DevWebView(
 
                 controller.webView = this
                 DevWebViewController.applyUserAgent(this, controller.isDesktopMode)
-                controller.setApiBlockingEnabled(isApiBlockingEnabled())
+                controller.updateApiBlockingEnabled(isApiBlockingEnabled())
                 loadUrl(startUrl)
             }
         },

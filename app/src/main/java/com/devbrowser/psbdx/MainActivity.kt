@@ -81,7 +81,7 @@ class MainActivity : ComponentActivity() {
             PSBDxDevBrowserTheme {
                 Surface(modifier = Modifier) {
                     val viewModel: BrowserViewModel = viewModel(
-                        factory = BrowserViewModel.Factory(app.database, app.settingsRepository)
+                        factory = BrowserViewModel.Factory(app.database, app.settingsRepository, app.updateManager)
                     )
                     MainScreen(
                         viewModel = viewModel,

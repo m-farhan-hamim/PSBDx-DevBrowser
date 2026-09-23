@@ -83,10 +83,65 @@ The `gradlew` and `gradlew.bat` scripts are included; only the
 `gradle-wrapper.jar` binary is generated on demand (by you locally, or by
 CI) rather than committed to the repo.
 
+## Distribution flavors & self-update
+
+There are two build flavors, controlling whether the direct-APK
+self-updater exists at all:
+
+- **`github`** — built for direct download from this repo's GitHub
+  Releases. Checks `https://api.github.com/repos/m-farhan-hamim/PSBDx-DevBrowser/releases/latest`
+  at most once every 24 hours, compares its `tag_name` (SemVer, `v`
+  prefix stripped) against `BuildConfig.VERSION_NAME`, and if newer,
+  shows a dismissible banner under the toolbar. Tapping **Update**
+  downloads the release's `.apk` asset into the app's private cache,
+  then hands it to the system Package Installer via a `FileProvider`
+  `content://` URI — the user still sees and confirms that system
+  install prompt themselves; nothing installs silently.
+- **`fdroid`** — has the update checker compiled out entirely
+  (`BuildConfig.IS_UPDATE_CHECK_ENABLED = false`), per F-Droid's
+  requirement that apps it distributes never self-update outside of
+  F-Droid's own mechanism.
+
+Belt-and-suspenders: even a `github`-flavor build refuses to check for
+updates at runtime if it detects (via `PackageManager.getInstallSourceInfo`
+/ `getInstallerPackageName`) that it was actually installed through the
+F-Droid client (`org.fdroid.fdroid` or `org.fdroid.fdroid.privileged`).
+
+Build a specific flavor with `./gradlew assembleGithubRelease` or
+`./gradlew assembleFdroidRelease` (see `.github/workflows/build.yml`,
+which builds the `github` flavor for its release artifacts).
+
+### Self-install via PackageInstaller (not a plain ACTION_VIEW)
+
+Tapping "Update" installs the downloaded APK through the
+[`PackageInstaller`](https://developer.android.com/reference/android/content/pm/PackageInstaller)
+Session API (`update/PackageInstallerHelper.kt`), not a plain
+`ACTION_VIEW` intent handed off to the generic system installer. The
+system still shows its own install-confirmation UI either way — the
+difference is *who gets recorded as the installer* of the result. Using
+the Session API makes this app itself the recorded installer, the same
+way F-Droid's client and Obtainium do their own self-updates.
+
+That in turn is what makes Settings → Apps → PSBDx DevBrowser → (Store
+section) → **App details** open something useful after a self-update,
+via `AppDetailsRedirectActivity` handling `android.intent.action.SHOW_APP_INFO`.
+This is the same hand-off Play Store, F-Droid, and Aurora Store use to
+show their own listing page for apps installed through them — it does
+**not** touch or replace anything else on that screen. Permissions,
+Battery usage, Manage notifications, Storage usage, and the Uninstall
+control all stay exactly as Android provides them; this only supplies
+the destination for one supplementary "where did this app come from"
+link, and only when this app is genuinely the recorded installer (i.e.
+after a self-update — a first-time sideload via a file manager or ADB
+still shows that tool's own info there instead, honestly).
+
 ## CI/CD (GitHub Actions)
 
-`.github/workflows/build.yml` builds both a Debug and a signed Release
-APK on every push/PR to `main`, and uploads them as workflow artifacts:
+`.github/workflows/build.yml` builds the `github` flavor's Debug and
+signed Release APKs on every push/PR to `main` (plus a `fdroid`-flavor
+debug build, just so CI catches any flavor-specific compile errors —
+F-Droid's own build server is what actually produces the APK F-Droid
+distributes), and uploads them as workflow artifacts:
 `PSBDx-DevBrowser-Debug-APK` and `PSBDx-DevBrowser-Release-APK`.
 
 Set these repository secrets to enable release signing (the Release
@@ -104,12 +159,18 @@ never fails on a fork without secrets):
 
 - No Google Play Services, Firebase, Crashlytics, AdMob, or other
   proprietary SDKs anywhere in the dependency graph.
-- Permissions: `INTERNET` / `ACCESS_NETWORK_STATE` for browsing, plus
-  `CAMERA` / `RECORD_AUDIO` / `ACCESS_FINE_LOCATION` so the browser is
-  *able* to grant a website's camera/mic/location request — but nothing
-  is ever auto-granted. Every origin starts fully denied for all three
-  until the user explicitly allows that specific site from the
-  address bar's Site info panel.
+- The `fdroid` build flavor has the self-updater compiled out entirely
+  — see "Distribution flavors & self-update" above.
+- Permissions: `INTERNET` / `ACCESS_NETWORK_STATE` for browsing,
+  `POST_NOTIFICATIONS` (Android 13+) and `ACCESS_FINE_LOCATION`
+  requested once at launch, plus `CAMERA` / `RECORD_AUDIO` so the
+  browser is *able* to grant a website's camera/mic/location request —
+  but nothing is ever auto-granted. Every origin starts fully denied
+  for all three until the user explicitly allows that specific site
+  from the address bar's Site info panel. `REQUEST_INSTALL_PACKAGES`
+  exists only for the `github` flavor's self-updater, and only ever
+  triggers the system installer for a file the user tapped "Update"
+  to download themselves.
 - Eruda is bundled as a local asset (`assets/eruda.min.js`, MIT header
   intact) and evaluated in-page; the app never fetches executable JS
   from a remote CDN at runtime.

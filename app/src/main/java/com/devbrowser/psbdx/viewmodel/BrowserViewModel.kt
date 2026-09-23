@@ -21,10 +21,13 @@ import com.devbrowser.psbdx.data.JsSnippetEntity
 import com.devbrowser.psbdx.data.SearchEngineId
 import com.devbrowser.psbdx.data.SettingsRepository
 import com.devbrowser.psbdx.data.SitePermissionType
+import com.devbrowser.psbdx.update.UpdateInfo
+import com.devbrowser.psbdx.update.UpdateManager
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import java.io.File
 import java.util.UUID
 
 /** A single browser tab's minimal state. The WebView itself lives in the UI layer. */
@@ -45,8 +48,13 @@ sealed interface DevPanel {
 
 class BrowserViewModel(
     private val database: AppDatabase,
-    private val settingsRepository: SettingsRepository
+    private val settingsRepository: SettingsRepository,
+    private val updateManager: UpdateManager
 ) : ViewModel() {
+
+    init {
+        checkForUpdates()
+    }
 
     // ---------------------------------------------------------------
     // Tabs
@@ -176,6 +184,60 @@ class BrowserViewModel(
     }
 
     // ---------------------------------------------------------------
+    // Self-update (GitHub Releases direct-APK flow — "github" flavor
+    // only; compiled out entirely for "fdroid", see UpdateManager)
+    // ---------------------------------------------------------------
+    var updateInfo by mutableStateOf<UpdateInfo?>(null)
+        private set
+
+    var updateBannerDismissed by mutableStateOf(false)
+        private set
+
+    /** Null when not downloading; 0-100 while a download is in progress. */
+    var updateDownloadProgress by mutableStateOf<Int?>(null)
+        private set
+
+    var downloadedUpdateApk by mutableStateOf<File?>(null)
+        private set
+
+    fun checkForUpdates(force: Boolean = false) {
+        viewModelScope.launch {
+            val info = updateManager.checkForUpdate(force)
+            if (info != null) {
+                updateInfo = info
+                updateBannerDismissed = false
+            }
+        }
+    }
+
+    fun dismissUpdateBanner() {
+        updateBannerDismissed = true
+    }
+
+    fun downloadUpdate() {
+        val info = updateInfo ?: return
+        viewModelScope.launch {
+            updateDownloadProgress = 0
+            val file = updateManager.downloadApk(info.downloadUrl) { percent -> updateDownloadProgress = percent }
+            updateDownloadProgress = null
+            downloadedUpdateApk = file
+        }
+    }
+
+    fun clearDownloadedUpdateApk() {
+        downloadedUpdateApk = null
+    }
+
+    fun canRequestPackageInstalls(): Boolean = updateManager.canRequestPackageInstalls()
+
+    fun buildUnknownSourcesSettingsIntent(): android.content.Intent =
+        updateManager.buildUnknownSourcesSettingsIntent()
+
+    fun installDownloadedApk(apkFile: File) {
+        updateManager.installApk(apkFile)
+    }
+
+    // ---------------------------------------------------------------
     // Persistence-backed streams
     // ---------------------------------------------------------------
     val bookmarks: StateFlow<List<BookmarkEntity>> =
@@ -228,12 +290,13 @@ class BrowserViewModel(
 
     class Factory(
         private val database: AppDatabase,
-        private val settingsRepository: SettingsRepository
+        private val settingsRepository: SettingsRepository,
+        private val updateManager: UpdateManager
     ) : ViewModelProvider.Factory {
         @Suppress("UNCHECKED_CAST")
         override fun <T : ViewModel> create(modelClass: Class<T>): T {
             require(modelClass.isAssignableFrom(BrowserViewModel::class.java))
-            return BrowserViewModel(database, settingsRepository) as T
+            return BrowserViewModel(database, settingsRepository, updateManager) as T
         }
     }
 }

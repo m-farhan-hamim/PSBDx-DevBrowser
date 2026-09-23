@@ -62,6 +62,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.dp
@@ -101,6 +102,17 @@ fun MainScreen(
     val isLoading = loadProgress in 1..99
     val isHttps = currentUrl.startsWith("https://", ignoreCase = true)
     val currentHost = remember(currentUrl) { runCatching { Uri.parse(currentUrl).host }.getOrNull().orEmpty() }
+    val context = LocalContext.current
+
+    // Once a tapped "Update" download finishes, hand the APK straight to
+    // the system Package Installer via a PackageInstaller session — the
+    // user still sees and confirms that system install prompt themselves.
+    LaunchedEffect(viewModel.downloadedUpdateApk) {
+        viewModel.downloadedUpdateApk?.let { file ->
+            viewModel.installDownloadedApk(file)
+            viewModel.clearDownloadedUpdateApk()
+        }
+    }
 
     // Shown text: the page title once loaded (Chrome-style), or the URL
     // itself while loading / with no title yet. Tapping the field always
@@ -188,7 +200,8 @@ fun MainScreen(
                             onClearStorage = { showStorageClearConfirm = true },
                             onSettings = { viewModel.setSettingsDialogVisible(true) },
                             onAbout = { viewModel.setAboutDialogVisible(true) },
-                            onLicenses = { viewModel.setLicensesDialogVisible(true) }
+                            onLicenses = { viewModel.setLicensesDialogVisible(true) },
+                            onHelpDocs = { viewModel.openNewTab(HELP_DOCS_URL) }
                         )
                     }
                 )
@@ -196,6 +209,21 @@ fun MainScreen(
                     LinearProgressIndicator(
                         progress = { loadProgress / 100f },
                         modifier = Modifier.fillMaxWidth()
+                    )
+                }
+                val updateInfo = viewModel.updateInfo
+                if (updateInfo != null && !viewModel.updateBannerDismissed) {
+                    UpdateBanner(
+                        updateInfo = updateInfo,
+                        downloadProgress = viewModel.updateDownloadProgress,
+                        onUpdateClick = {
+                            if (viewModel.canRequestPackageInstalls()) {
+                                viewModel.downloadUpdate()
+                            } else {
+                                context.startActivity(viewModel.buildUnknownSourcesSettingsIntent())
+                            }
+                        },
+                        onDismiss = { viewModel.dismissUpdateBanner() }
                     )
                 }
             }
@@ -352,7 +380,8 @@ private fun BrowserOverflowMenu(
     onClearStorage: () -> Unit,
     onSettings: () -> Unit,
     onAbout: () -> Unit,
-    onLicenses: () -> Unit
+    onLicenses: () -> Unit,
+    onHelpDocs: () -> Unit
 ) {
     fun wrap(action: () -> Unit): () -> Unit = { action(); onDismiss() }
 
@@ -382,6 +411,7 @@ private fun BrowserOverflowMenu(
         DropdownMenuItem(text = { Text("Settings") }, onClick = wrap(onSettings))
         DropdownMenuItem(text = { Text("About") }, onClick = wrap(onAbout))
         DropdownMenuItem(text = { Text("Licenses") }, onClick = wrap(onLicenses))
+        DropdownMenuItem(text = { Text("Help & Docs") }, onClick = wrap(onHelpDocs))
     }
 }
 
@@ -552,6 +582,10 @@ private fun TabSwitcherOverlay(viewModel: BrowserViewModel, onDismiss: () -> Uni
         }
     }
 }
+
+/** Opened as a normal new tab from the overflow menu's "Help & Docs" item — never used to
+ *  hijack any system UI surface (see the app's README for why that request was declined). */
+private const val HELP_DOCS_URL = "https://docs.psbdx.com/dev-browser-app-details"
 
 /**
  * Scales the address bar's font down as the shown text (title or URL)

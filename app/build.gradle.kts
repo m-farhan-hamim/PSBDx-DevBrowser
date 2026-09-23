@@ -95,8 +95,32 @@ android {
         jvmTarget = "17"
     }
 
+    // --------------------------------------------------------------
+    // Build flavors: the "fdroid" flavor compiles with the update
+    // checker permanently disabled at the source level (not just
+    // hidden behind a runtime check), since F-Droid's own guidelines
+    // require builds it distributes to never self-update outside of
+    // F-Droid's own update mechanism. The "github" flavor is the one
+    // published as a direct-download APK on GitHub Releases and is the
+    // only one that ever checks/downloads updates — and even then only
+    // after confirming at runtime that it wasn't itself installed via
+    // the F-Droid client (see UpdateManager.isRunningFromFDroid).
+    // --------------------------------------------------------------
+    flavorDimensions += "distribution"
+    productFlavors {
+        create("github") {
+            dimension = "distribution"
+            buildConfigField("boolean", "IS_UPDATE_CHECK_ENABLED", "true")
+        }
+        create("fdroid") {
+            dimension = "distribution"
+            buildConfigField("boolean", "IS_UPDATE_CHECK_ENABLED", "false")
+        }
+    }
+
     buildFeatures {
         compose = true
+        buildConfig = true
     }
 
     composeOptions {

@@ -26,6 +26,14 @@
     <uses-feature android:name="android.hardware.microphone" android:required="false" />
     <uses-feature android:name="android.hardware.location" android:required="false" />
 
+    <!-- Lets the "github" flavor's self-updater trigger the system
+         installer for a downloaded APK. Not used at all by the "fdroid"
+         flavor (BuildConfig.IS_UPDATE_CHECK_ENABLED is false there), and
+         even in the "github" flavor, granting this in Settings only lets
+         the user choose to install what THEY tapped "Update" for — it
+         never installs anything automatically. -->
+    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
+
     <application
         android:name=".DevBrowserApplication"
         android:allowBackup="true"
@@ -56,6 +64,44 @@
                 <category android:name="android.intent.category.BROWSABLE" />
                 <data android:scheme="http" />
                 <data android:scheme="https" />
+            </intent-filter>
+        </activity>
+
+        <!-- Shares a downloaded update APK from this app's private cache
+             (see res/xml/file_paths.xml) as a content:// URI so the
+             system Package Installer can read it on Android 7.0+. -->
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="${applicationId}.fileprovider"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/file_paths" />
+        </provider>
+
+        <!-- Receives the PackageInstaller session result from
+             PackageInstallerHelper. Not exported: only the OS ever
+             fires the specific PendingIntent this app created. -->
+        <receiver
+            android:name=".update.InstallResultReceiver"
+            android:exported="false" />
+
+        <!-- Handles the "App details" link Settings shows under the
+             Store section for whichever app is recorded as this app's
+             installer — see AppDetailsRedirectActivity's own doc
+             comment for what this does and does not affect. Must be
+             exported so Settings (a different app/process) can launch
+             it; it does nothing beyond opening one fixed docs URL. -->
+        <activity
+            android:name=".AppDetailsRedirectActivity"
+            android:exported="true"
+            android:excludeFromRecents="true"
+            android:noHistory="true"
+            android:theme="@android:style/Theme.Translucent.NoTitleBar">
+            <intent-filter>
+                <action android:name="android.intent.action.SHOW_APP_INFO" />
+                <category android:name="android.intent.category.DEFAULT" />
             </intent-filter>
         </activity>
 

@@ -770,6 +770,10 @@ private fun faviconColorFor(host: String): Color {
     return FAVICON_PALETTE[idx]
 }
 
+/** Opened as a normal new tab from the overflow menu's "Help & Docs" item — never used to
+ *  hijack any system UI surface (see the app's README for the App details / installer notes). */
+private const val HELP_DOCS_URL = "https://docs.psbdx.com/dev-browser-app-details"
+
 
 private fun addressBarFontSize(text: String): androidx.compose.ui.unit.TextUnit {
     val length = text.length

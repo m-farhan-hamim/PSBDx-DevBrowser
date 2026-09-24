@@ -83,33 +83,34 @@ The `gradlew` and `gradlew.bat` scripts are included; only the
 `gradle-wrapper.jar` binary is generated on demand (by you locally, or by
 CI) rather than committed to the repo.
 
-## Distribution flavors & self-update
+## Self-update (single universal APK)
 
-There are two build flavors, controlling whether the direct-APK
-self-updater exists at all:
+There's just one APK — the same build works whether it's downloaded
+directly from GitHub Releases, installed from F-Droid, or sideloaded
+any other way. Whether the self-updater is allowed to run at all is
+decided entirely at runtime by `UpdateManager`, not by a separate build
+variant:
 
-- **`github`** — built for direct download from this repo's GitHub
-  Releases. Checks `https://api.github.com/repos/m-farhan-hamim/PSBDx-DevBrowser/releases/latest`
+- It checks `https://api.github.com/repos/m-farhan-hamim/PSBDx-DevBrowser/releases/latest`
   at most once every 24 hours, compares its `tag_name` (SemVer, `v`
   prefix stripped) against `BuildConfig.VERSION_NAME`, and if newer,
   shows a dismissible banner under the toolbar. Tapping **Update**
   downloads the release's `.apk` asset into the app's private cache,
-  then hands it to the system Package Installer via a `FileProvider`
-  `content://` URI — the user still sees and confirms that system
-  install prompt themselves; nothing installs silently.
-- **`fdroid`** — has the update checker compiled out entirely
-  (`BuildConfig.IS_UPDATE_CHECK_ENABLED = false`), per F-Droid's
+  then installs it (see "Self-install via PackageInstaller" below).
+- Before any of that, it checks the actual install source via
+  `PackageManager.getInstallSourceInfo` / `getInstallerPackageName`. If
+  this copy was installed through the F-Droid client
+  (`org.fdroid.fdroid` or `org.fdroid.fdroid.privileged`), the updater
+  refuses to check for or download anything at all — per F-Droid's own
   requirement that apps it distributes never self-update outside of
-  F-Droid's own mechanism.
+  F-Droid's own mechanism. Every other install source is treated as
+  fair game for the direct-APK updater.
 
-Belt-and-suspenders: even a `github`-flavor build refuses to check for
-updates at runtime if it detects (via `PackageManager.getInstallSourceInfo`
-/ `getInstallerPackageName`) that it was actually installed through the
-F-Droid client (`org.fdroid.fdroid` or `org.fdroid.fdroid.privileged`).
-
-Build a specific flavor with `./gradlew assembleGithubRelease` or
-`./gradlew assembleFdroidRelease` (see `.github/workflows/build.yml`,
-which builds the `github` flavor for its release artifacts).
+`BuildConfig.IS_UPDATE_CHECK_ENABLED` still exists as a single
+always-`true` flag in `defaultConfig` — a manual off-switch if you ever
+need to ship a build with the updater compiled out entirely — but there
+is no `fdroid`/`github` flavor split; `./gradlew assembleDebug` /
+`assembleRelease` produce the one APK used everywhere.
 
 ### Self-install via PackageInstaller (not a plain ACTION_VIEW)
 
@@ -137,12 +138,9 @@ still shows that tool's own info there instead, honestly).
 
 ## CI/CD (GitHub Actions)
 
-`.github/workflows/build.yml` builds the `github` flavor's Debug and
-signed Release APKs on every push/PR to `main` (plus a `fdroid`-flavor
-debug build, just so CI catches any flavor-specific compile errors —
-F-Droid's own build server is what actually produces the APK F-Droid
-distributes), and uploads them as workflow artifacts:
-`PSBDx-DevBrowser-Debug-APK` and `PSBDx-DevBrowser-Release-APK`.
+`.github/workflows/build.yml` builds the one universal Debug and signed
+Release APK on every push/PR to `main`, and uploads them as workflow
+artifacts: `PSBDx-DevBrowser-Debug-APK` and `PSBDx-DevBrowser-Release-APK`.
 
 Set these repository secrets to enable release signing (the Release
 build falls back to debug signing if they're absent, so the workflow
@@ -159,8 +157,9 @@ never fails on a fork without secrets):
 
 - No Google Play Services, Firebase, Crashlytics, AdMob, or other
   proprietary SDKs anywhere in the dependency graph.
-- The `fdroid` build flavor has the self-updater compiled out entirely
-  — see "Distribution flavors & self-update" above.
+- The self-updater refuses to run at all — checked at runtime, on this
+  same single APK — if it detects it was installed via the F-Droid
+  client. See "Self-update (single universal APK)" above.
 - Permissions: `INTERNET` / `ACCESS_NETWORK_STATE` for browsing,
   `POST_NOTIFICATIONS` (Android 13+) and `ACCESS_FINE_LOCATION`
   requested once at launch, plus `CAMERA` / `RECORD_AUDIO` so the
@@ -168,9 +167,9 @@ never fails on a fork without secrets):
   but nothing is ever auto-granted. Every origin starts fully denied
   for all three until the user explicitly allows that specific site
   from the address bar's Site info panel. `REQUEST_INSTALL_PACKAGES`
-  exists only for the `github` flavor's self-updater, and only ever
-  triggers the system installer for a file the user tapped "Update"
-  to download themselves.
+  exists only for the self-updater, and only ever triggers the system
+  installer for a file the user tapped "Update" to download themselves
+  — and only ever runs at all outside of an F-Droid-sourced install.
 - Eruda is bundled as a local asset (`assets/eruda.min.js`, MIT header
   intact) and evaluated in-page; the app never fetches executable JS
   from a remote CDN at runtime.

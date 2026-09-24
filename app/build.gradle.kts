@@ -30,6 +30,15 @@ android {
         vectorDrawables {
             useSupportLibrary = true
         }
+
+        // Single universal APK for every distribution channel (GitHub
+        // Releases, F-Droid, sideloading, etc.) — there is no separate
+        // "fdroid" build. Whether the self-updater is allowed to run is
+        // decided entirely at runtime by UpdateManager, which checks the
+        // actual install source (PackageManager.getInstallSourceInfo /
+        // getInstallerPackageName) and refuses to check for or download
+        // updates if this copy was installed via the F-Droid client.
+        buildConfigField("boolean", "IS_UPDATE_CHECK_ENABLED", "true")
     }
 
     // --------------------------------------------------------------
@@ -93,29 +102,6 @@ android {
 
     kotlinOptions {
         jvmTarget = "17"
-    }
-
-    // --------------------------------------------------------------
-    // Build flavors: the "fdroid" flavor compiles with the update
-    // checker permanently disabled at the source level (not just
-    // hidden behind a runtime check), since F-Droid's own guidelines
-    // require builds it distributes to never self-update outside of
-    // F-Droid's own update mechanism. The "github" flavor is the one
-    // published as a direct-download APK on GitHub Releases and is the
-    // only one that ever checks/downloads updates — and even then only
-    // after confirming at runtime that it wasn't itself installed via
-    // the F-Droid client (see UpdateManager.isRunningFromFDroid).
-    // --------------------------------------------------------------
-    flavorDimensions += "distribution"
-    productFlavors {
-        create("github") {
-            dimension = "distribution"
-            buildConfigField("boolean", "IS_UPDATE_CHECK_ENABLED", "true")
-        }
-        create("fdroid") {
-            dimension = "distribution"
-            buildConfigField("boolean", "IS_UPDATE_CHECK_ENABLED", "false")
-        }
     }
 
     buildFeatures {

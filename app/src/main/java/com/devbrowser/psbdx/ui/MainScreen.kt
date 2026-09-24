@@ -8,8 +8,13 @@
  */
 package com.devbrowser.psbdx.ui
 
+import android.graphics.Bitmap
+import android.graphics.Canvas
 import android.net.Uri
 import androidx.activity.compose.BackHandler
+import androidx.compose.foundation.Image
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -23,8 +28,12 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
+import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
@@ -32,9 +41,12 @@ import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.BookmarkAdd
 import androidx.compose.material.icons.filled.BookmarkRemove
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.GridView
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.ViewList
 import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
@@ -62,12 +74,17 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.devbrowser.psbdx.data.SitePermissionType
+import com.devbrowser.psbdx.viewmodel.BrowserTab
 import com.devbrowser.psbdx.viewmodel.BrowserViewModel
 import com.devbrowser.psbdx.viewmodel.DevPanel
 import com.devbrowser.psbdx.webview.DevWebView
@@ -111,6 +128,20 @@ fun MainScreen(
         viewModel.downloadedUpdateApk?.let { file ->
             viewModel.installDownloadedApk(file)
             viewModel.clearDownloadedUpdateApk()
+        }
+    }
+
+    // The app shares a single WebView across every tab, so switching the
+    // *active* tab (from the grid switcher, or opening a new tab) needs
+    // to explicitly navigate that shared WebView to the newly-selected
+    // tab's URL. Skips the very first composition, since DevWebView's
+    // own factory already loads the initial tab's URL once on its own.
+    var isFirstTabLoad by remember { mutableStateOf(true) }
+    LaunchedEffect(viewModel.activeTabId) {
+        if (isFirstTabLoad) {
+            isFirstTabLoad = false
+        } else {
+            controller.loadUrl(viewModel.activeTab.url, viewModel.searchEngine.urlTemplate)
         }
     }
 
@@ -172,7 +203,19 @@ fun MainScreen(
                         }
                     },
                     actions = {
-                        TextButton(onClick = { showTabSwitcher = true }) {
+                        TextButton(onClick = {
+                            controller.webView?.let { wv ->
+                                if (wv.width > 0 && wv.height > 0) {
+                                    val bitmap = runCatching {
+                                        Bitmap.createBitmap(wv.width, wv.height, Bitmap.Config.ARGB_8888).also {
+                                            wv.draw(Canvas(it))
+                                        }
+                                    }.getOrNull()
+                                    bitmap?.let { viewModel.updateTabThumbnail(viewModel.activeTabId, it) }
+                                }
+                            }
+                            showTabSwitcher = true
+                        }) {
                             Text("${viewModel.tabs.size}")
                         }
                         IconButton(onClick = { showOverflowMenu = true }) {
@@ -519,79 +562,215 @@ private fun PanelScaffold(title: String, onClose: () -> Unit, content: @Composab
 
 @Composable
 private fun TabSwitcherOverlay(viewModel: BrowserViewModel, onDismiss: () -> Unit) {
+    var searchQuery by remember { mutableStateOf("") }
+    var isGridMode by remember { mutableStateOf(true) }
+    var showOverflowMenu by remember { mutableStateOf(false) }
+
+    val filteredTabs = remember(viewModel.tabs, searchQuery) {
+        if (searchQuery.isBlank()) {
+            viewModel.tabs
+        } else {
+            viewModel.tabs.filter {
+                it.title.contains(searchQuery, ignoreCase = true) || it.url.contains(searchQuery, ignoreCase = true)
+            }
+        }
+    }
+
     Surface(modifier = Modifier.fillMaxSize()) {
-        Column(modifier = Modifier.padding(16.dp)) {
+        Column(modifier = Modifier.fillMaxSize()) {
+            // Top bar: new tab, tab count + layout toggle, overflow menu
             Row(
-                modifier = Modifier.fillMaxWidth(),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 12.dp, vertical = 8.dp),
+                verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.SpaceBetween
             ) {
-                Text("Tabs", style = MaterialTheme.typography.titleLarge)
-                Row {
-                    IconButton(onClick = { viewModel.openNewTab() }) {
+                Surface(
+                    shape = RoundedCornerShape(14.dp),
+                    color = MaterialTheme.colorScheme.surfaceVariant,
+                    modifier = Modifier.size(44.dp)
+                ) {
+                    IconButton(onClick = {
+                        viewModel.openNewTab()
+                        onDismiss()
+                    }) {
                         Icon(Icons.Filled.Add, contentDescription = "New tab")
                     }
-                    IconButton(onClick = onDismiss) {
-                        Icon(Icons.Filled.Close, contentDescription = "Close tab switcher")
+                }
+
+                Surface(
+                    shape = RoundedCornerShape(50),
+                    color = MaterialTheme.colorScheme.surfaceVariant
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(
+                            "${viewModel.tabs.size}",
+                            fontWeight = FontWeight.Bold,
+                            modifier = Modifier.padding(start = 16.dp, end = 4.dp)
+                        )
+                        IconButton(onClick = { isGridMode = !isGridMode }) {
+                            Icon(
+                                if (isGridMode) Icons.Filled.GridView else Icons.Filled.ViewList,
+                                contentDescription = "Toggle tab layout"
+                            )
+                        }
+                    }
+                }
+
+                Box {
+                    IconButton(onClick = { showOverflowMenu = true }) {
+                        Icon(Icons.Filled.MoreVert, contentDescription = "Tab options")
+                    }
+                    DropdownMenu(expanded = showOverflowMenu, onDismissRequest = { showOverflowMenu = false }) {
+                        DropdownMenuItem(
+                            text = { Text("Close all tabs") },
+                            onClick = {
+                                viewModel.closeAllTabs()
+                                showOverflowMenu = false
+                            }
+                        )
+                        DropdownMenuItem(
+                            text = { Text("Close switcher") },
+                            onClick = {
+                                showOverflowMenu = false
+                                onDismiss()
+                            }
+                        )
                     }
                 }
             }
-            LazyRow(
-                contentPadding = PaddingValues(8.dp),
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
+
+            OutlinedTextField(
+                value = searchQuery,
+                onValueChange = { searchQuery = it },
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp),
+                placeholder = { Text("Search your tabs") },
+                leadingIcon = { Icon(Icons.Filled.Search, contentDescription = null) },
+                singleLine = true,
+                shape = RoundedCornerShape(24.dp)
+            )
+
+            Spacer(modifier = Modifier.height(8.dp))
+
+            LazyVerticalGrid(
+                columns = GridCells.Fixed(if (isGridMode) 2 else 1),
+                contentPadding = PaddingValues(12.dp),
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp),
+                modifier = Modifier.weight(1f)
             ) {
-                items(viewModel.tabs) { tab ->
-                    Card(
-                        modifier = Modifier
-                            .width(160.dp)
-                            .height(120.dp)
-                    ) {
-                        Column(modifier = Modifier.padding(8.dp).fillMaxSize()) {
-                            Row(
-                                horizontalArrangement = Arrangement.SpaceBetween,
-                                modifier = Modifier.fillMaxWidth()
-                            ) {
-                                Text(
-                                    tab.title,
-                                    maxLines = 1,
-                                    modifier = Modifier.weight(1f)
-                                )
-                                IconButton(
-                                    onClick = { viewModel.closeTab(tab.id) },
-                                    modifier = Modifier.size(20.dp)
-                                ) {
-                                    Icon(Icons.Filled.Close, contentDescription = "Close ${tab.title}")
-                                }
-                            }
-                            Spacer(modifier = Modifier.height(4.dp))
-                            Text(
-                                tab.url,
-                                maxLines = 2,
-                                style = MaterialTheme.typography.bodySmall,
-                                modifier = Modifier.weight(1f)
-                            )
-                            TextButton(onClick = {
-                                viewModel.selectTab(tab.id)
-                                onDismiss()
-                            }) {
-                                Text("Open")
-                            }
-                        }
-                    }
+                items(filteredTabs, key = { it.id }) { tab ->
+                    TabGridCard(
+                        tab = tab,
+                        onSelect = {
+                            viewModel.selectTab(tab.id)
+                            onDismiss()
+                        },
+                        onClose = { viewModel.closeTab(tab.id) }
+                    )
                 }
             }
         }
     }
 }
 
-/** Opened as a normal new tab from the overflow menu's "Help & Docs" item — never used to
- *  hijack any system UI surface (see the app's README for why that request was declined). */
-private const val HELP_DOCS_URL = "https://docs.psbdx.com/dev-browser-app-details"
+@Composable
+private fun TabGridCard(tab: BrowserTab, onSelect: () -> Unit, onClose: () -> Unit) {
+    val host = remember(tab.url) { runCatching { Uri.parse(tab.url).host }.getOrNull().orEmpty() }
 
-/**
- * Scales the address bar's font down as the shown text (title or URL)
- * gets longer, so long page titles or URLs still fit on one line on a
- * narrow phone screen instead of being truncated too aggressively.
- */
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(190.dp)
+            .clickable { onSelect() }
+    ) {
+        Column(modifier = Modifier.fillMaxSize()) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(start = 10.dp, end = 4.dp, top = 4.dp, bottom = 4.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                TabFavicon(host)
+                Spacer(modifier = Modifier.width(8.dp))
+                Text(
+                    tab.title.ifBlank { host.ifBlank { "New Tab" } },
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    style = MaterialTheme.typography.bodySmall,
+                    modifier = Modifier.weight(1f)
+                )
+                IconButton(onClick = onClose, modifier = Modifier.size(28.dp)) {
+                    Icon(
+                        Icons.Filled.Close,
+                        contentDescription = "Close ${tab.title}",
+                        modifier = Modifier.size(16.dp)
+                    )
+                }
+            }
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .weight(1f)
+                    .background(MaterialTheme.colorScheme.surfaceVariant)
+            ) {
+                val thumbnail = tab.thumbnail
+                if (thumbnail != null) {
+                    Image(
+                        bitmap = thumbnail.asImageBitmap(),
+                        contentDescription = null,
+                        modifier = Modifier.fillMaxSize(),
+                        contentScale = ContentScale.Crop
+                    )
+                } else {
+                    Text(
+                        host.ifBlank { "No preview yet" },
+                        modifier = Modifier
+                            .align(Alignment.Center)
+                            .padding(8.dp),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun TabFavicon(host: String) {
+    val letter = host.firstOrNull()?.uppercaseChar()?.toString() ?: "?"
+    val color = remember(host) { faviconColorFor(host) }
+    Box(
+        modifier = Modifier
+            .size(20.dp)
+            .background(color, CircleShape),
+        contentAlignment = Alignment.Center
+    ) {
+        Text(
+            letter,
+            color = Color.White,
+            fontSize = 10.sp,
+            fontWeight = FontWeight.Bold
+        )
+    }
+}
+
+private val FAVICON_PALETTE = listOf(
+    Color(0xFF4285F4), Color(0xFFDE5833), Color(0xFF00897B),
+    Color(0xFFFB542B), Color(0xFF7C4DFF), Color(0xFFEF6C00)
+)
+
+private fun faviconColorFor(host: String): Color {
+    if (host.isBlank()) return FAVICON_PALETTE.first()
+    val idx = host.hashCode().let { if (it < 0) -it else it } % FAVICON_PALETTE.size
+    return FAVICON_PALETTE[idx]
+}
+
+
 private fun addressBarFontSize(text: String): androidx.compose.ui.unit.TextUnit {
     val length = text.length
     return when {

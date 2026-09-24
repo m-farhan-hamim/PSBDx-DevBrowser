@@ -8,6 +8,7 @@
  */
 package com.devbrowser.psbdx.viewmodel
 
+import android.graphics.Bitmap
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
@@ -35,7 +36,9 @@ data class BrowserTab(
     val id: String = UUID.randomUUID().toString(),
     val title: String = "New Tab",
     val url: String = "https://www.google.com",
-    val isDesktopMode: Boolean = false
+    val isDesktopMode: Boolean = false,
+    /** A captured snapshot of the page for the tab-grid preview card; null until first captured. */
+    val thumbnail: Bitmap? = null
 )
 
 sealed interface DevPanel {
@@ -84,6 +87,15 @@ class BrowserViewModel(
 
     fun selectTab(tabId: String) {
         activeTabId = tabId
+    }
+
+    fun closeAllTabs() {
+        tabs = listOf(BrowserTab())
+        activeTabId = tabs.first().id
+    }
+
+    fun updateTabThumbnail(tabId: String, bitmap: Bitmap) {
+        tabs = tabs.map { tab -> if (tab.id == tabId) tab.copy(thumbnail = bitmap) else tab }
     }
 
     fun updateActiveTab(url: String? = null, title: String? = null, desktopMode: Boolean? = null) {

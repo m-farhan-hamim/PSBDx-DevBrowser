@@ -14,6 +14,7 @@ import android.content.SharedPreferences
 import android.net.Uri
 import android.os.Build
 import android.provider.Settings
+import android.util.Log
 import androidx.core.content.FileProvider
 import com.devbrowser.psbdx.BuildConfig
 import kotlinx.coroutines.Dispatchers
@@ -32,23 +33,42 @@ data class UpdateInfo(
 )
 
 /**
- * Handles the whole direct-APK self-update flow for the "github"
- * distribution flavor: checking GitHub Releases, comparing versions,
- * downloading the APK, and building the install intent.
+ * The outcome of a [UpdateManager.checkForUpdate] call. Deliberately NOT
+ * collapsed into a nullable [UpdateInfo] — a failed network call and a
+ * genuinely up-to-date app both need to be reported honestly rather than
+ * both silently looking like "no update", which is exactly the bug that
+ * previously made a failed/blocked GitHub API call show "You're on the
+ * latest version" even when a newer release actually existed.
+ */
+sealed interface UpdateCheckResult {
+    data class Available(val info: UpdateInfo) : UpdateCheckResult
+    data object UpToDate : UpdateCheckResult
+    /** Not due for a check yet (only possible when [force] is false). */
+    data object NotDue : UpdateCheckResult
+    /** Update checks are disabled for this build, or this install came via F-Droid. */
+    data object Disabled : UpdateCheckResult
+    /** The GitHub API call, parsing, or asset lookup failed. [reason] is safe to show the user. */
+    data class Failed(val reason: String) : UpdateCheckResult
+}
+
+/**
+ * Handles the whole direct-APK self-update flow: checking GitHub
+ * Releases, comparing versions, downloading the APK, and installing it.
  *
- * Deliberately does nothing at all for the "fdroid" flavor
- * ([BuildConfig.IS_UPDATE_CHECK_ENABLED] is compiled to `false` there),
- * and additionally refuses to run even in a "github"-flavor build if it
- * detects at runtime that this particular install actually came through
- * the F-Droid client — F-Droid requires apps it distributes to never
- * self-update outside of F-Droid's own mechanism.
+ * This is a single universal APK — there is no separate F-Droid build.
+ * [BuildConfig.IS_UPDATE_CHECK_ENABLED] is a manual off-switch (always
+ * `true` today), and on top of that, this refuses to check for or
+ * download updates at runtime if it detects that this particular
+ * install actually came through the F-Droid client — F-Droid requires
+ * apps it distributes to never self-update outside of its own
+ * mechanism.
  */
 class UpdateManager(private val context: Context) {
 
     private val prefs: SharedPreferences =
         context.applicationContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
 
-    /** Compile-time flavor flag AND runtime installer check, both must allow it. */
+    /** Compile-time flag AND runtime installer check, both must allow it. */
     fun isUpdateCheckAllowed(): Boolean {
         if (!BuildConfig.IS_UPDATE_CHECK_ENABLED) return false
         return !isInstalledViaFDroid()
@@ -78,52 +98,99 @@ class UpdateManager(private val context: Context) {
     }
 
     /**
-     * Fetches the latest GitHub release and returns update info if it's
-     * newer than the running app. Returns null if: update checks are
-     * disabled for this build/install, a check isn't due yet (unless
-     * [force]), the release couldn't be parsed, it has no .apk asset, or
-     * it isn't actually newer. Never throws — network/parsing failures
-     * are swallowed and treated the same as "no update available".
+     * Fetches the latest GitHub release and compares it against the
+     * running app. Every failure mode gets its own [UpdateCheckResult]
+     * case with a specific, loggable reason — nothing is silently
+     * treated as "you're up to date" anymore.
      */
-    suspend fun checkForUpdate(force: Boolean = false): UpdateInfo? = withContext(Dispatchers.IO) {
-        if (!isUpdateCheckAllowed()) return@withContext null
-        if (!force && !isCheckDue()) return@withContext null
+    suspend fun checkForUpdate(force: Boolean = false): UpdateCheckResult = withContext(Dispatchers.IO) {
+        if (!isUpdateCheckAllowed()) return@withContext UpdateCheckResult.Disabled
+        if (!force && !isCheckDue()) return@withContext UpdateCheckResult.NotDue
 
-        val body = runCatching {
+        val fetchResult = runCatching {
             val connection = URL(GITHUB_RELEASES_URL).openConnection() as HttpURLConnection
             connection.requestMethod = "GET"
+            // GitHub's REST API rejects requests with no User-Agent header
+            // (403 Forbidden) — this is a common, easy-to-miss gotcha.
+            connection.setRequestProperty("User-Agent", "PSBDx-DevBrowser-UpdateChecker")
             connection.setRequestProperty("Accept", "application/vnd.github+json")
             connection.connectTimeout = 10_000
             connection.readTimeout = 10_000
+
+            val code = connection.responseCode
+            if (code !in 200..299) {
+                val errorBody = runCatching {
+                    connection.errorStream?.bufferedReader()?.use { it.readText() }
+                }.getOrNull().orEmpty()
+                throw HttpStatusException(code, errorBody)
+            }
             connection.inputStream.bufferedReader().use { it.readText() }
-        }.getOrNull()
-
+        }
         markChecked()
-        if (body == null) return@withContext null
 
-        val json = runCatching { JSONObject(body) }.getOrNull() ?: return@withContext null
+        val body = fetchResult.getOrElse { error ->
+            val reason = when (error) {
+                is HttpStatusException -> describeHttpFailure(error)
+                else -> "network error (${error.message ?: error.javaClass.simpleName})"
+            }
+            Log.w(TAG, "Update check failed: $reason", error)
+            return@withContext UpdateCheckResult.Failed(reason)
+        }
+
+        val json = runCatching { JSONObject(body) }.getOrNull()
+            ?: run {
+                Log.w(TAG, "Update check failed: couldn't parse GitHub response as JSON")
+                return@withContext UpdateCheckResult.Failed("couldn't parse GitHub's response")
+            }
+
         val tagName = json.optString("tag_name", "").removePrefix("v").removePrefix("V")
-        if (tagName.isBlank()) return@withContext null
+        if (tagName.isBlank()) {
+            Log.w(TAG, "Update check failed: release has no tag_name")
+            return@withContext UpdateCheckResult.Failed("the latest release has no version tag")
+        }
 
-        val assets = json.optJSONArray("assets") ?: return@withContext null
+        val assets = json.optJSONArray("assets")
         var apkUrl: String? = null
-        for (i in 0 until assets.length()) {
-            val asset = assets.optJSONObject(i) ?: continue
-            if (asset.optString("name").endsWith(".apk", ignoreCase = true)) {
-                apkUrl = asset.optString("browser_download_url").takeIf { it.isNotBlank() }
-                if (apkUrl != null) break
+        if (assets != null) {
+            for (i in 0 until assets.length()) {
+                val asset = assets.optJSONObject(i) ?: continue
+                if (asset.optString("name").endsWith(".apk", ignoreCase = true)) {
+                    apkUrl = asset.optString("browser_download_url").takeIf { it.isNotBlank() }
+                    if (apkUrl != null) break
+                }
             }
         }
-        val downloadUrl = apkUrl ?: return@withContext null
+        val downloadUrl = apkUrl ?: run {
+            Log.w(TAG, "Update check failed: release $tagName has no .apk asset")
+            return@withContext UpdateCheckResult.Failed("release v$tagName has no .apk file attached")
+        }
 
-        if (!isNewerVersion(tagName, BuildConfig.VERSION_NAME)) return@withContext null
+        if (!isNewerVersion(tagName, BuildConfig.VERSION_NAME)) {
+            return@withContext UpdateCheckResult.UpToDate
+        }
 
-        UpdateInfo(
-            version = tagName,
-            downloadUrl = downloadUrl,
-            releaseUrl = json.optString("html_url").takeIf { it.isNotBlank() }
+        UpdateCheckResult.Available(
+            UpdateInfo(
+                version = tagName,
+                downloadUrl = downloadUrl,
+                releaseUrl = json.optString("html_url").takeIf { it.isNotBlank() }
+            )
         )
     }
+
+    private fun describeHttpFailure(error: HttpStatusException): String = when (error.code) {
+        403, 429 -> if (error.body.contains("rate limit", ignoreCase = true)) {
+            "GitHub API rate limit hit — wait a bit and try again"
+        } else {
+            "GitHub API refused the request (HTTP ${error.code})"
+        }
+        404 -> "no releases found for this repository"
+        in 500..599 -> "GitHub is having issues (HTTP ${error.code}) — try again later"
+        else -> "GitHub API returned HTTP ${error.code}"
+    }
+
+    private class HttpStatusException(val code: Int, val body: String) :
+        Exception("HTTP $code: $body")
 
     /** SemVer-style comparison: true if [remote] is a newer version than [current]. */
     internal fun isNewerVersion(remote: String, current: String): Boolean {
@@ -149,6 +216,7 @@ class UpdateManager(private val context: Context) {
     suspend fun downloadApk(url: String, onProgress: (Int) -> Unit): File? = withContext(Dispatchers.IO) {
         runCatching {
             val connection = URL(url).openConnection() as HttpURLConnection
+            connection.setRequestProperty("User-Agent", "PSBDx-DevBrowser-UpdateChecker")
             connection.connectTimeout = 15_000
             connection.readTimeout = 15_000
             connection.instanceFollowRedirects = true
@@ -173,7 +241,7 @@ class UpdateManager(private val context: Context) {
                 }
             }
             outputFile
-        }.getOrNull()
+        }.onFailure { Log.w(TAG, "Update download failed", it) }.getOrNull()
     }
 
     /**
@@ -187,6 +255,7 @@ class UpdateManager(private val context: Context) {
         runCatching {
             PackageInstallerHelper.installApk(context, apkFile)
         }.onFailure {
+            Log.w(TAG, "PackageInstaller session failed, falling back to ACTION_VIEW", it)
             context.startActivity(buildInstallIntent(apkFile))
         }
     }
@@ -214,6 +283,7 @@ class UpdateManager(private val context: Context) {
     }
 
     companion object {
+        private const val TAG = "PSBDxUpdateManager"
         private const val GITHUB_RELEASES_URL =
             "https://api.github.com/repos/m-farhan-hamim/PSBDx-DevBrowser/releases/latest"
         private const val PREFS_NAME = "psbdx_update"

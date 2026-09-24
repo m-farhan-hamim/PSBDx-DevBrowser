@@ -23,6 +23,7 @@ import com.devbrowser.psbdx.data.JsSnippetEntity
 import com.devbrowser.psbdx.data.SearchEngineId
 import com.devbrowser.psbdx.data.SettingsRepository
 import com.devbrowser.psbdx.data.SitePermissionType
+import com.devbrowser.psbdx.update.UpdateCheckResult
 import com.devbrowser.psbdx.update.UpdateInfo
 import com.devbrowser.psbdx.update.UpdateManager
 import kotlinx.coroutines.flow.SharingStarted
@@ -228,12 +229,26 @@ class BrowserViewModel(
             updateCheckMessage = null
         }
         viewModelScope.launch {
-            val info = updateManager.checkForUpdate(force)
-            if (info != null) {
-                updateInfo = info
-                updateBannerDismissed = false
-            } else if (force) {
-                updateCheckMessage = "You're on the latest version (v${BuildConfig.VERSION_NAME})"
+            when (val result = updateManager.checkForUpdate(force)) {
+                is UpdateCheckResult.Available -> {
+                    updateInfo = result.info
+                    updateBannerDismissed = false
+                }
+                is UpdateCheckResult.UpToDate -> {
+                    if (force) {
+                        updateCheckMessage = "You're on the latest version (v${BuildConfig.VERSION_NAME})"
+                    }
+                }
+                is UpdateCheckResult.Failed -> {
+                    if (force) {
+                        updateCheckMessage = "Couldn't check for updates: ${result.reason}"
+                    }
+                }
+                is UpdateCheckResult.Disabled,
+                is UpdateCheckResult.NotDue -> {
+                    // Nothing to show: disabled (F-Droid install) or simply not due
+                    // yet for an automatic (non-forced) check.
+                }
             }
             if (force) {
                 isCheckingForUpdate = false

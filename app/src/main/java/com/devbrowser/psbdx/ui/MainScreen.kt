@@ -355,7 +355,13 @@ fun MainScreen(
                 viewModel.updateApiBlockingEnabled(it)
                 controller.updateApiBlockingEnabled(it)
             },
-            onDismiss = { viewModel.setSettingsDialogVisible(false) }
+            isCheckingForUpdate = viewModel.isCheckingForUpdate,
+            updateCheckMessage = viewModel.updateCheckMessage,
+            onCheckForUpdatesClick = { viewModel.checkForUpdates(force = true) },
+            onDismiss = {
+                viewModel.setSettingsDialogVisible(false)
+                viewModel.clearUpdateCheckMessage()
+            }
         )
     }
 

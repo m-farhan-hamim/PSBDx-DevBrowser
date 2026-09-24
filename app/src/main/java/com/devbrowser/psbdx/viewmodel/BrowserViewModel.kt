@@ -15,6 +15,7 @@ import androidx.compose.runtime.setValue
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
+import com.devbrowser.psbdx.BuildConfig
 import com.devbrowser.psbdx.data.AppDatabase
 import com.devbrowser.psbdx.data.BookmarkEntity
 import com.devbrowser.psbdx.data.HistoryEntity
@@ -196,8 +197,9 @@ class BrowserViewModel(
     }
 
     // ---------------------------------------------------------------
-    // Self-update (GitHub Releases direct-APK flow — "github" flavor
-    // only; compiled out entirely for "fdroid", see UpdateManager)
+    // Self-update (GitHub Releases direct-APK flow, single universal
+    // APK — see UpdateManager for the runtime F-Droid install-source
+    // guard that disables this without needing a separate build)
     // ---------------------------------------------------------------
     var updateInfo by mutableStateOf<UpdateInfo?>(null)
         private set
@@ -212,14 +214,35 @@ class BrowserViewModel(
     var downloadedUpdateApk by mutableStateOf<File?>(null)
         private set
 
+    /** True only while a check triggered by the user (Settings button) is running. */
+    var isCheckingForUpdate by mutableStateOf(false)
+        private set
+
+    /** Brief feedback for a manual check, e.g. "You're on the latest version" — null otherwise. */
+    var updateCheckMessage by mutableStateOf<String?>(null)
+        private set
+
     fun checkForUpdates(force: Boolean = false) {
+        if (force) {
+            isCheckingForUpdate = true
+            updateCheckMessage = null
+        }
         viewModelScope.launch {
             val info = updateManager.checkForUpdate(force)
             if (info != null) {
                 updateInfo = info
                 updateBannerDismissed = false
+            } else if (force) {
+                updateCheckMessage = "You're on the latest version (v${BuildConfig.VERSION_NAME})"
+            }
+            if (force) {
+                isCheckingForUpdate = false
             }
         }
+    }
+
+    fun clearUpdateCheckMessage() {
+        updateCheckMessage = null
     }
 
     fun dismissUpdateBanner() {

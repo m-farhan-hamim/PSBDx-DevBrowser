@@ -1,4 +1,4 @@
 <resources>
     <!-- Sampled from the app icon's rounded-square background. -->
-    <color name="ic_launcher_background">#1B1D2C</color>
+    <color name="ic_launcher_background">#1F1F1F</color>
 </resources>

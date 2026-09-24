@@ -19,6 +19,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.RadioButton
@@ -52,6 +53,9 @@ fun SettingsDialog(
     onEngineSelected: (SearchEngineId) -> Unit,
     apiBlockingEnabled: Boolean,
     onApiBlockingToggle: (Boolean) -> Unit,
+    isCheckingForUpdate: Boolean,
+    updateCheckMessage: String?,
+    onCheckForUpdatesClick: () -> Unit,
     onDismiss: () -> Unit
 ) {
     AlertDialog(
@@ -93,6 +97,36 @@ fun SettingsDialog(
                         )
                     }
                     Switch(checked = apiBlockingEnabled, onCheckedChange = onApiBlockingToggle)
+                }
+
+                HorizontalDivider(modifier = Modifier.padding(vertical = 12.dp))
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text("Updates", fontWeight = FontWeight.Bold)
+                        Text(
+                            "Checks automatically at most once a day. You can also " +
+                                "check right now.",
+                            style = MaterialTheme.typography.bodySmall
+                        )
+                        if (updateCheckMessage != null) {
+                            Text(
+                                updateCheckMessage,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.padding(top = 4.dp)
+                            )
+                        }
+                    }
+                    if (isCheckingForUpdate) {
+                        CircularProgressIndicator(modifier = Modifier.size(24.dp))
+                    } else {
+                        TextButton(onClick = onCheckForUpdatesClick) { Text("Check now") }
+                    }
                 }
             }
         }

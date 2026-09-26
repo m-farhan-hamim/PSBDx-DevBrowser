@@ -23,6 +23,7 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.RadioButton
+import androidx.compose.material3.Slider
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -53,6 +54,8 @@ fun SettingsDialog(
     onEngineSelected: (SearchEngineId) -> Unit,
     apiBlockingEnabled: Boolean,
     onApiBlockingToggle: (Boolean) -> Unit,
+    erudaHeightPercent: Int,
+    onErudaHeightChange: (Int) -> Unit,
     isCheckingForUpdate: Boolean,
     updateCheckMessage: String?,
     onCheckForUpdatesClick: () -> Unit,
@@ -98,6 +101,20 @@ fun SettingsDialog(
                     }
                     Switch(checked = apiBlockingEnabled, onCheckedChange = onApiBlockingToggle)
                 }
+
+                HorizontalDivider(modifier = Modifier.padding(vertical = 12.dp))
+
+                Text("Eruda console height", fontWeight = FontWeight.Bold)
+                Text(
+                    "How much of the screen the Eruda console takes up when opened: $erudaHeightPercent%.",
+                    style = MaterialTheme.typography.bodySmall
+                )
+                Slider(
+                    value = erudaHeightPercent.toFloat(),
+                    onValueChange = { onErudaHeightChange(it.toInt()) },
+                    valueRange = 10f..90f,
+                    steps = 15
+                )
 
                 HorizontalDivider(modifier = Modifier.padding(vertical = 12.dp))
 

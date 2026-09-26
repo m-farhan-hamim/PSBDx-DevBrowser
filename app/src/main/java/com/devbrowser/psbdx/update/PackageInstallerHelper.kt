@@ -50,7 +50,19 @@ object PackageInstallerHelper {
                 }
             }
 
-            val statusIntent = Intent(ACTION_INSTALL_STATUS).setPackage(context.packageName)
+            // IMPORTANT: this must target InstallResultReceiver EXPLICITLY.
+            // InstallResultReceiver has no <intent-filter> in the manifest
+            // (deliberately — it's only ever meant to be reached via this
+            // exact PendingIntent). An Intent built with just an action
+            // string + setPackage() has no explicit component, so when the
+            // system later fires it as an implicit broadcast, Android has
+            // nothing to match it against and the broadcast silently goes
+            // nowhere — which was exactly why the install prompt never
+            // appeared: the session committed fine, but the status
+            // broadcast telling us to launch the confirmation UI vanished.
+            val statusIntent = Intent(context, InstallResultReceiver::class.java).apply {
+                action = ACTION_INSTALL_STATUS
+            }
             val flags = PendingIntent.FLAG_UPDATE_CURRENT or
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) PendingIntent.FLAG_MUTABLE else 0
             val pendingIntent = PendingIntent.getBroadcast(context, sessionId, statusIntent, flags)

@@ -9,6 +9,7 @@
 package com.devbrowser.psbdx.webview
 
 import android.annotation.SuppressLint
+import android.content.pm.PackageManager
 import android.net.Uri
 import android.webkit.CookieManager
 import android.webkit.GeolocationPermissions
@@ -20,6 +21,9 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.viewinterop.AndroidView
+import androidx.core.content.ContextCompat
+import androidx.webkit.WebSettingsCompat
+import androidx.webkit.WebViewFeature
 import com.devbrowser.psbdx.data.SitePermissionType
 import java.net.URLEncoder
 
@@ -47,6 +51,9 @@ private const val DESKTOP_USER_AGENT =
 private const val CHROME_LIKE_MOBILE_USER_AGENT =
     "Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 (KHTML, like Gecko) " +
         "Chrome/126.0.0.0 Mobile Safari/537.36"
+
+/** Cookie count and total size (bytes) for a site, shown in the Site info panel. */
+data class CookieSummary(val count: Int, val sizeBytes: Int)
 
 /**
  * Holds a reference to the single WebView instance backing the active tab
@@ -103,6 +110,11 @@ class DevWebViewController {
         webView?.evaluateJavascript(ERUDA_TOGGLE_JS, null)
     }
 
+    /** Live-applies a new Eruda console height (10-90%) to the current page immediately. */
+    fun setErudaHeightPercent(percent: Int) {
+        webView?.evaluateJavascript(buildErudaHeightCssJs(percent), null)
+    }
+
     fun runSnippet(code: String) {
         webView?.evaluateJavascript(code, null)
     }
@@ -111,6 +123,20 @@ class DevWebViewController {
     fun updateApiBlockingEnabled(enabled: Boolean) {
         isApiBlockingEnabled = enabled
         webView?.evaluateJavascript("window.__psbdxBlockApi = $enabled;", null)
+    }
+
+    /**
+     * Re-applies the algorithmic-darkening setting to match the app's
+     * current light/dark theme, so pages that use the
+     * `prefers-color-scheme` media query see the same theme the rest of
+     * the app is in. Safe to call even when the installed WebView is too
+     * old to support this — it's a no-op in that case.
+     */
+    fun applyDarkMode(isDarkTheme: Boolean) {
+        val wv = webView ?: return
+        if (WebViewFeature.isFeatureSupported(WebViewFeature.ALGORITHMIC_DARKENING)) {
+            WebSettingsCompat.setAlgorithmicDarkeningAllowed(wv.settings, isDarkTheme)
+        }
     }
 
     /** Clears cache, cookies, LocalStorage/SessionStorage and form data for every site. */
@@ -127,10 +153,44 @@ class DevWebViewController {
         )
     }
 
-    /** Deletes only the cookies belonging to the currently-loaded site's origin. */
+    /**
+     * Deletes the cookies belonging to the currently-loaded site, using
+     * the native [CookieManager] rather than `document.cookie` JS. This
+     * matters because `document.cookie` can never see or delete
+     * HttpOnly cookies (very common for session/login cookies) — those
+     * are only reachable through the native cookie store, which is what
+     * this does instead. Also runs the previous JS-based sweep, in case
+     * a cookie was set with an unusual path this doesn't catch.
+     */
     fun deleteCookiesForCurrentSite() {
-        webView?.evaluateJavascript(DELETE_SITE_COOKIES_JS, null)
-        CookieManager.getInstance().flush()
+        val wv = webView ?: return
+        val url = wv.url ?: return
+        val host = runCatching { java.net.URI(url).host }.getOrNull()
+        val cookieManager = CookieManager.getInstance()
+        val cookieString = cookieManager.getCookie(url)
+
+        cookieString?.split(";")?.forEach { pair ->
+            val name = pair.substringBefore("=").trim()
+            if (name.isBlank()) return@forEach
+            val expired = "$name=; Max-Age=0; Expires=Thu, 01 Jan 1970 00:00:00 GMT"
+            cookieManager.setCookie(url, "$expired; path=/")
+            if (host != null) {
+                cookieManager.setCookie(url, "$expired; path=/; domain=$host")
+                cookieManager.setCookie(url, "$expired; path=/; domain=.$host")
+            }
+        }
+
+        wv.evaluateJavascript(DELETE_SITE_COOKIES_JS, null)
+        cookieManager.flush()
+    }
+
+    /** Cookie count and total size (bytes) for the currently-loaded site, for display in Site info. */
+    fun cookieSummaryForCurrentSite(): CookieSummary {
+        val url = webView?.url ?: return CookieSummary(0, 0)
+        val cookieString = CookieManager.getInstance().getCookie(url)
+        if (cookieString.isNullOrBlank()) return CookieSummary(0, 0)
+        val entries = cookieString.split(";").map { it.trim() }.filter { it.isNotEmpty() }
+        return CookieSummary(count = entries.size, sizeBytes = cookieString.toByteArray(Charsets.UTF_8).size)
     }
 
     companion object {
@@ -184,6 +244,28 @@ class DevWebViewController {
             })();
         """
 
+        /**
+         * Forces Eruda's own dev-tools panel to a specific viewport-height
+         * percentage via an injected `!important` stylesheet, since Eruda
+         * otherwise sets its own inline height (from the user dragging its
+         * resize handle, persisted per-origin in that page's localStorage)
+         * which would otherwise vary unpredictably from site to site.
+         */
+        internal fun buildErudaHeightCssJs(percent: Int): String {
+            val clamped = percent.coerceIn(10, 90)
+            return """
+                (function(){
+                  var style = document.getElementById('__psbdx_eruda_height_style');
+                  if (!style) {
+                    style = document.createElement('style');
+                    style.id = '__psbdx_eruda_height_style';
+                    document.head.appendChild(style);
+                  }
+                  style.textContent = '#eruda .eruda-dev-tools{height:${clamped}vh !important;}';
+                })();
+            """
+        }
+
         internal fun applyUserAgent(webView: WebView, desktop: Boolean) {
             webView.settings.userAgentString = if (desktop) {
                 DESKTOP_USER_AGENT
@@ -208,22 +290,31 @@ class DevWebViewController {
 /**
  * Jetpack Compose wrapper around a raw [WebView], configured for developer
  * use: JavaScript, DOM storage, mixed content, zoom controls, automatic
- * Eruda.js injection, opt-in API-request blocking, and per-site
- * third-party-cookie / camera-microphone-location permission gating are
- * all wired up here via [ErudaWebClient] and the [WebChromeClient] below.
+ * Eruda.js injection, opt-in API-request blocking, live light/dark theme
+ * matching, and per-site third-party-cookie / camera-microphone-location
+ * permission gating are all wired up here via [ErudaWebClient] and the
+ * [WebChromeClient] below.
  */
 @SuppressLint("SetJavaScriptEnabled")
 @Composable
 fun DevWebView(
     controller: DevWebViewController,
     startUrl: String,
+    isDarkTheme: Boolean,
     onPageStarted: (String) -> Unit = {},
     onPageFinished: (String, String) -> Unit = { _, _ -> },
     onProgressChanged: (Int) -> Unit = {},
     isApiBlockingEnabled: () -> Boolean = { false },
     isThirdPartyCookiesAllowed: (String) -> Boolean = { false },
     isPermissionAllowed: (String, SitePermissionType) -> Boolean = { _, _ -> false },
+    hasPermissionDecision: (String, SitePermissionType) -> Boolean = { _, _ -> false },
+    onPermissionRequestNeeded: (
+        host: String,
+        types: List<SitePermissionType>,
+        resolve: (Map<SitePermissionType, Boolean>) -> Unit
+    ) -> Unit = { _, _, resolve -> resolve(emptyMap()) },
     requestRuntimePermission: (String, (Boolean) -> Unit) -> Unit = { _, onResult -> onResult(false) },
+    erudaHeightPercent: () -> Int = { 30 },
     modifier: Modifier = Modifier
 ) {
     val erudaClient = remember {
@@ -231,7 +322,8 @@ fun DevWebView(
             onPageStarted = onPageStarted,
             onPageFinished = onPageFinished,
             isApiBlockingEnabled = isApiBlockingEnabled,
-            isThirdPartyCookiesAllowed = isThirdPartyCookiesAllowed
+            isThirdPartyCookiesAllowed = isThirdPartyCookiesAllowed,
+            erudaHeightPercent = erudaHeightPercent
         )
     }
 
@@ -267,12 +359,14 @@ fun DevWebView(
 
                     /**
                      * Camera/microphone are never requested from the OS at app
-                     * launch. This callback only fires when a page actually
-                     * calls getUserMedia(), and even then the OS permission
-                     * dialog (requestRuntimePermission) is only triggered for
-                     * resources the user has already opted this specific site
-                     * into via the Site info panel — anything not opted in is
-                     * denied without any OS prompt at all.
+                     * launch. The first time a site asks for one of these and
+                     * this app has no saved decision for that site yet, this
+                     * surfaces an actual Allow/Block prompt to the user (via
+                     * [onPermissionRequestNeeded], which the UI layer turns
+                     * into a real dialog) instead of silently denying it —
+                     * the user's choice is then remembered for that site, so
+                     * later requests are applied automatically without asking
+                     * again.
                      */
                     override fun onPermissionRequest(request: PermissionRequest) {
                         val host = request.origin.host
@@ -281,45 +375,61 @@ fun DevWebView(
                             return
                         }
 
-                        val approvedResources = request.resources.mapNotNull { resource ->
-                            val (type, osPermission) = when (resource) {
-                                PermissionRequest.RESOURCE_VIDEO_CAPTURE ->
-                                    SitePermissionType.CAMERA to android.Manifest.permission.CAMERA
-                                PermissionRequest.RESOURCE_AUDIO_CAPTURE ->
-                                    SitePermissionType.MICROPHONE to android.Manifest.permission.RECORD_AUDIO
-                                else -> return@mapNotNull null
+                        val requestedTypes = request.resources.mapNotNull { resource ->
+                            when (resource) {
+                                PermissionRequest.RESOURCE_VIDEO_CAPTURE -> SitePermissionType.CAMERA
+                                PermissionRequest.RESOURCE_AUDIO_CAPTURE -> SitePermissionType.MICROPHONE
+                                else -> null
                             }
-                            if (isPermissionAllowed(host, type)) resource to osPermission else null
-                        }
+                        }.distinct()
 
-                        if (approvedResources.isEmpty()) {
+                        if (requestedTypes.isEmpty()) {
                             request.deny()
                             return
                         }
 
-                        val grantedResources = mutableListOf<String>()
-                        var remaining = approvedResources.size
-
-                        fun finish() {
-                            if (grantedResources.isEmpty()) request.deny() else request.grant(grantedResources.toTypedArray())
-                        }
-
-                        approvedResources.forEach { (resource, osPermission) ->
-                            val alreadyGranted = androidx.core.content.ContextCompat.checkSelfPermission(
-                                context, osPermission
-                            ) == android.content.pm.PackageManager.PERMISSION_GRANTED
-
-                            if (alreadyGranted) {
-                                grantedResources.add(resource)
-                                remaining--
-                                if (remaining == 0) finish()
-                            } else {
-                                requestRuntimePermission(osPermission) { granted ->
-                                    if (granted) grantedResources.add(resource)
-                                    remaining--
-                                    if (remaining == 0) finish()
+                        fun resolveWithDecisions(decisions: Map<SitePermissionType, Boolean>) {
+                            val approvedResources = requestedTypes.mapNotNull { type ->
+                                if (decisions[type] != true) return@mapNotNull null
+                                when (type) {
+                                    SitePermissionType.CAMERA ->
+                                        PermissionRequest.RESOURCE_VIDEO_CAPTURE to android.Manifest.permission.CAMERA
+                                    SitePermissionType.MICROPHONE ->
+                                        PermissionRequest.RESOURCE_AUDIO_CAPTURE to android.Manifest.permission.RECORD_AUDIO
+                                    SitePermissionType.LOCATION -> null
                                 }
                             }
+                            if (approvedResources.isEmpty()) {
+                                request.deny()
+                                return
+                            }
+
+                            val grantedResources = mutableListOf<String>()
+                            var remaining = approvedResources.size
+                            fun finish() {
+                                if (grantedResources.isEmpty()) request.deny() else request.grant(grantedResources.toTypedArray())
+                            }
+                            approvedResources.forEach { (resource, osPermission) ->
+                                val alreadyGranted = ContextCompat.checkSelfPermission(context, osPermission) ==
+                                    PackageManager.PERMISSION_GRANTED
+                                if (alreadyGranted) {
+                                    grantedResources.add(resource)
+                                    remaining--
+                                    if (remaining == 0) finish()
+                                } else {
+                                    requestRuntimePermission(osPermission) { granted ->
+                                        if (granted) grantedResources.add(resource)
+                                        remaining--
+                                        if (remaining == 0) finish()
+                                    }
+                                }
+                            }
+                        }
+
+                        if (requestedTypes.all { hasPermissionDecision(host, it) }) {
+                            resolveWithDecisions(requestedTypes.associateWith { isPermissionAllowed(host, it) })
+                        } else {
+                            onPermissionRequestNeeded(host, requestedTypes) { decisions -> resolveWithDecisions(decisions) }
                         }
                     }
 
@@ -328,17 +438,27 @@ fun DevWebView(
                         callback: GeolocationPermissions.Callback
                     ) {
                         val host = runCatching { Uri.parse(origin).host }.getOrNull()
-                        val allowed = host != null && isPermissionAllowed(host, SitePermissionType.LOCATION)
-                        callback.invoke(origin, allowed, false)
+                        if (host == null) {
+                            callback.invoke(origin, false, false)
+                            return
+                        }
+                        if (hasPermissionDecision(host, SitePermissionType.LOCATION)) {
+                            callback.invoke(origin, isPermissionAllowed(host, SitePermissionType.LOCATION), false)
+                        } else {
+                            onPermissionRequestNeeded(host, listOf(SitePermissionType.LOCATION)) { decisions ->
+                                callback.invoke(origin, decisions[SitePermissionType.LOCATION] == true, false)
+                            }
+                        }
                     }
                 }
 
                 controller.webView = this
                 DevWebViewController.applyUserAgent(this, controller.isDesktopMode)
                 controller.updateApiBlockingEnabled(isApiBlockingEnabled())
+                controller.applyDarkMode(isDarkTheme)
                 loadUrl(startUrl)
             }
         },
-        update = { /* Navigation is driven imperatively via controller */ }
+        update = { controller.applyDarkMode(isDarkTheme) }
     )
 }

@@ -73,7 +73,7 @@ class BrowserViewModel(
     val activeTab: BrowserTab
         get() = tabs.firstOrNull { it.id == activeTabId } ?: tabs.first()
 
-    fun openNewTab(url: String = "https://www.google.com") {
+    fun openNewTab(url: String = searchEngine.homepageUrl) {
         val tab = BrowserTab(url = url)
         tabs = tabs + tab
         activeTabId = tab.id
@@ -81,7 +81,7 @@ class BrowserViewModel(
 
     fun closeTab(tabId: String) {
         val remaining = tabs.filterNot { it.id == tabId }
-        tabs = remaining.ifEmpty { listOf(BrowserTab()) }
+        tabs = remaining.ifEmpty { listOf(BrowserTab(url = searchEngine.homepageUrl)) }
         if (activeTabId == tabId) {
             activeTabId = tabs.first().id
         }
@@ -92,7 +92,7 @@ class BrowserViewModel(
     }
 
     fun closeAllTabs() {
-        tabs = listOf(BrowserTab())
+        tabs = listOf(BrowserTab(url = searchEngine.homepageUrl))
         activeTabId = tabs.first().id
     }
 
@@ -166,6 +166,15 @@ class BrowserViewModel(
     var searchEngine by mutableStateOf(settingsRepository.getSearchEngine())
         private set
 
+    // Runs after `searchEngine` above is initialized, correcting the very
+    // first tab (created with a placeholder default before that point)
+    // to actually open the selected engine's homepage instead of always
+    // Google's, regardless of what the user has picked in Settings.
+    init {
+        tabs = listOf(BrowserTab(url = searchEngine.homepageUrl))
+        activeTabId = tabs.first().id
+    }
+
     fun updateSearchEngine(engine: SearchEngineId) {
         searchEngine = engine
         settingsRepository.setSearchEngine(engine)
@@ -179,9 +188,19 @@ class BrowserViewModel(
         settingsRepository.setApiBlockingEnabled(enabled)
     }
 
+    /** Eruda console panel height as a percentage of viewport height (10-90), default 30. */
+    var erudaHeightPercent by mutableStateOf(settingsRepository.getErudaHeightPercent())
+        private set
+
+    fun updateErudaHeightPercent(percent: Int) {
+        erudaHeightPercent = percent.coerceIn(10, 90)
+        settingsRepository.setErudaHeightPercent(erudaHeightPercent)
+    }
+
     // ---------------------------------------------------------------
     // Per-site privacy & permissions (surfaced from the address-bar
-    // lock/warning icon's site-info panel)
+    // lock/warning icon's site-info panel, and from the live
+    // Allow/Block prompt shown the first time a site asks for one)
     // ---------------------------------------------------------------
     fun isThirdPartyCookiesAllowed(host: String): Boolean =
         settingsRepository.isThirdPartyCookiesAllowed(host)
@@ -192,6 +211,9 @@ class BrowserViewModel(
 
     fun isPermissionAllowed(host: String, type: SitePermissionType): Boolean =
         settingsRepository.isPermissionAllowed(host, type)
+
+    fun hasPermissionDecision(host: String, type: SitePermissionType): Boolean =
+        settingsRepository.hasPermissionDecision(host, type)
 
     fun setPermissionAllowed(host: String, type: SitePermissionType, allowed: Boolean) {
         settingsRepository.setPermissionAllowed(host, type, allowed)

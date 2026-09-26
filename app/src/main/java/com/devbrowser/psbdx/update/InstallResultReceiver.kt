@@ -13,6 +13,7 @@ import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageInstaller
 import android.os.Build
+import android.util.Log
 
 /**
  * Receives the result of a [PackageInstaller] session committed by
@@ -30,6 +31,8 @@ import android.os.Build
 class InstallResultReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
         val status = intent.getIntExtra(PackageInstaller.EXTRA_STATUS, PackageInstaller.STATUS_FAILURE)
+        val message = intent.getStringExtra(PackageInstaller.EXTRA_STATUS_MESSAGE)
+        Log.d(TAG, "Install session status=$status message=$message")
         when (status) {
             PackageInstaller.STATUS_PENDING_USER_ACTION -> {
                 val confirmIntent = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
@@ -48,7 +51,12 @@ class InstallResultReceiver : BroadcastReceiver() {
                 // Failed or declined by the user — silently ignore. The
                 // update banner reappears on the next 24h check, and the
                 // user can just tap "Update" again to retry.
+                Log.w(TAG, "Install did not proceed (status=$status): $message")
             }
         }
+    }
+
+    companion object {
+        private const val TAG = "PSBDxInstallReceiver"
     }
 }

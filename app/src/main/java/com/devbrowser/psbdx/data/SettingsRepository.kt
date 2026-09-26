@@ -13,11 +13,17 @@ import android.content.SharedPreferences
 import androidx.core.content.edit
 
 /** A default search engine option. Icons are drawn as plain colored monograms in the UI. */
-enum class SearchEngineId(val label: String, val urlTemplate: String, val letter: String, val colorHex: Long) {
-    GOOGLE("Google", "https://www.google.com/search?q=%s", "G", 0xFF4285F4),
-    DUCKDUCKGO("DuckDuckGo", "https://duckduckgo.com/html/?q=%s", "D", 0xFFDE5833),
-    BING("Bing", "https://www.bing.com/search?q=%s", "B", 0xFF00897B),
-    BRAVE("Brave Search", "https://search.brave.com/search?q=%s", "B", 0xFFFB542B);
+enum class SearchEngineId(
+    val label: String,
+    val urlTemplate: String,
+    val homepageUrl: String,
+    val letter: String,
+    val colorHex: Long
+) {
+    GOOGLE("Google", "https://www.google.com/search?q=%s", "https://www.google.com", "G", 0xFF4285F4),
+    DUCKDUCKGO("DuckDuckGo", "https://duckduckgo.com/html/?q=%s", "https://duckduckgo.com", "D", 0xFFDE5833),
+    BING("Bing", "https://www.bing.com/search?q=%s", "https://www.bing.com", "B", 0xFF00897B),
+    BRAVE("Brave Search", "https://search.brave.com/search?q=%s", "https://search.brave.com", "B", 0xFFFB542B);
 
     companion object {
         val Default = GOOGLE
@@ -78,6 +84,24 @@ class SettingsRepository(context: Context) {
         prefs.edit { putBoolean(permissionKey(host, type), allowed) }
     }
 
+    /**
+     * True once the user has actually made an Allow/Block decision for
+     * this site+permission (via the live prompt or the Site info panel).
+     * Needed because [isPermissionAllowed] alone can't tell "explicitly
+     * blocked" apart from "never asked" — both read as `false` — which
+     * is what a plain boolean can't distinguish but a live per-request
+     * prompt needs to know, so it only asks once per site.
+     */
+    fun hasPermissionDecision(host: String, type: SitePermissionType): Boolean =
+        prefs.contains(permissionKey(host, type))
+
+    /** Eruda console panel height, as a percentage of viewport height. Defaults to 30%. */
+    fun getErudaHeightPercent(): Int = prefs.getInt(KEY_ERUDA_HEIGHT_PERCENT, 30)
+
+    fun setErudaHeightPercent(percent: Int) {
+        prefs.edit { putInt(KEY_ERUDA_HEIGHT_PERCENT, percent.coerceIn(10, 90)) }
+    }
+
     private fun thirdPartyCookieKey(host: String) = "third_party_cookies_$host"
     private fun permissionKey(host: String, type: SitePermissionType) = "perm_${type.prefKey}_$host"
 
@@ -85,5 +109,6 @@ class SettingsRepository(context: Context) {
         private const val PREFS_NAME = "psbdx_settings"
         private const val KEY_SEARCH_ENGINE = "search_engine"
         private const val KEY_BLOCK_API_REQUESTS = "block_api_requests"
+        private const val KEY_ERUDA_HEIGHT_PERCENT = "eruda_height_percent"
     }
 }

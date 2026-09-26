@@ -15,6 +15,7 @@ import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -91,6 +92,19 @@ import com.devbrowser.psbdx.webview.DevWebView
 import com.devbrowser.psbdx.webview.DevWebViewController
 
 /**
+ * Bridges a live camera/mic/location request from the WebView layer
+ * (which runs outside Compose) into a Compose-observable dialog: set
+ * into state by [DevWebView]'s onPermissionRequestNeeded callback, read
+ * by MainScreen to show [PermissionRequestDialog], and resolved by
+ * calling [resolve] with the user's Allow/Block choice per type.
+ */
+private data class PendingPermissionRequest(
+    val host: String,
+    val types: List<SitePermissionType>,
+    val resolve: (Map<SitePermissionType, Boolean>) -> Unit
+)
+
+/**
  * Root composable, laid out Chrome-style: a single top toolbar holding a
  * security icon, the address bar, the tab-count button, and a three-dot
  * overflow menu carrying every developer tool and setting. There is
@@ -114,7 +128,10 @@ fun MainScreen(
     var canGoBack by remember { mutableStateOf(false) }
     var currentUrl by remember { mutableStateOf(viewModel.activeTab.url) }
     var isBookmarked by remember { mutableStateOf(false) }
+    var pendingPermissionRequest by remember { mutableStateOf<PendingPermissionRequest?>(null) }
+    var cookieRefreshTick by remember { mutableStateOf(0) }
 
+    val isDarkTheme = isSystemInDarkTheme()
     val bookmarks by viewModel.bookmarks.collectAsState()
     val isLoading = loadProgress in 1..99
     val isHttps = currentUrl.startsWith("https://", ignoreCase = true)
@@ -129,6 +146,12 @@ fun MainScreen(
             viewModel.installDownloadedApk(file)
             viewModel.clearDownloadedUpdateApk()
         }
+    }
+
+    // Live-applies a new Eruda console height immediately when changed
+    // from Settings, without needing a page reload.
+    LaunchedEffect(viewModel.erudaHeightPercent) {
+        controller.setErudaHeightPercent(viewModel.erudaHeightPercent)
     }
 
     // The app shares a single WebView across every tab, so switching the
@@ -276,6 +299,7 @@ fun MainScreen(
             DevWebView(
                 controller = controller,
                 startUrl = viewModel.activeTab.url,
+                isDarkTheme = isDarkTheme,
                 onPageStarted = { url ->
                     addressBarText = url
                     currentUrl = url
@@ -297,7 +321,12 @@ fun MainScreen(
                 isApiBlockingEnabled = { viewModel.apiBlockingEnabled },
                 isThirdPartyCookiesAllowed = { host -> viewModel.isThirdPartyCookiesAllowed(host) },
                 isPermissionAllowed = { host, type -> viewModel.isPermissionAllowed(host, type) },
+                hasPermissionDecision = { host, type -> viewModel.hasPermissionDecision(host, type) },
+                onPermissionRequestNeeded = { host, types, resolve ->
+                    pendingPermissionRequest = PendingPermissionRequest(host, types, resolve)
+                },
                 requestRuntimePermission = requestRuntimePermission,
+                erudaHeightPercent = { viewModel.erudaHeightPercent },
                 modifier = Modifier.fillMaxSize()
             )
 
@@ -329,6 +358,23 @@ fun MainScreen(
                     onDismiss = { showTabSwitcher = false }
                 )
             }
+
+            pendingPermissionRequest?.let { req ->
+                PermissionRequestDialog(
+                    host = req.host,
+                    types = req.types,
+                    onAllow = {
+                        req.types.forEach { viewModel.setPermissionAllowed(req.host, it, true) }
+                        req.resolve(req.types.associateWith { true })
+                        pendingPermissionRequest = null
+                    },
+                    onBlock = {
+                        req.types.forEach { viewModel.setPermissionAllowed(req.host, it, false) }
+                        req.resolve(req.types.associateWith { false })
+                        pendingPermissionRequest = null
+                    }
+                )
+            }
         }
     }
 
@@ -355,6 +401,8 @@ fun MainScreen(
                 viewModel.updateApiBlockingEnabled(it)
                 controller.updateApiBlockingEnabled(it)
             },
+            erudaHeightPercent = viewModel.erudaHeightPercent,
+            onErudaHeightChange = { viewModel.updateErudaHeightPercent(it) },
             isCheckingForUpdate = viewModel.isCheckingForUpdate,
             updateCheckMessage = viewModel.updateCheckMessage,
             onCheckForUpdatesClick = { viewModel.checkForUpdates(force = true) },
@@ -369,9 +417,13 @@ fun MainScreen(
         val permissionStates = SitePermissionType.entries.map { type ->
             type to viewModel.isPermissionAllowed(currentHost, type)
         }
+        val cookieSummary = remember(currentHost, cookieRefreshTick) {
+            controller.cookieSummaryForCurrentSite()
+        }
         SiteInfoDialog(
             host = currentHost,
             isHttps = isHttps,
+            cookieSummary = cookieSummary,
             thirdPartyCookiesAllowed = viewModel.isThirdPartyCookiesAllowed(currentHost),
             onThirdPartyCookiesToggle = { allowed ->
                 viewModel.setThirdPartyCookiesAllowed(currentHost, allowed)
@@ -379,7 +431,10 @@ fun MainScreen(
             },
             permissionStates = permissionStates,
             onPermissionToggle = { type, allowed -> viewModel.setPermissionAllowed(currentHost, type, allowed) },
-            onDeleteCookies = { controller.deleteCookiesForCurrentSite() },
+            onDeleteCookies = {
+                controller.deleteCookiesForCurrentSite()
+                cookieRefreshTick++
+            },
             onDismiss = { viewModel.setSiteInfoDialogVisible(false) }
         )
     }

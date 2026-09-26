@@ -31,11 +31,13 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.devbrowser.psbdx.data.SitePermissionType
+import com.devbrowser.psbdx.webview.CookieSummary
 
 @Composable
 fun SiteInfoDialog(
     host: String,
     isHttps: Boolean,
+    cookieSummary: CookieSummary,
     thirdPartyCookiesAllowed: Boolean,
     onThirdPartyCookiesToggle: (Boolean) -> Unit,
     permissionStates: List<Pair<SitePermissionType, Boolean>>,
@@ -64,7 +66,19 @@ fun SiteInfoDialog(
                 HorizontalDivider(modifier = Modifier.padding(vertical = 12.dp))
 
                 Text("Cookies", fontWeight = FontWeight.Bold)
-                TextButton(onClick = onDeleteCookies, contentPadding = PaddingValues(0.dp)) {
+                Text(
+                    if (cookieSummary.count == 0) {
+                        "No cookies stored for this site."
+                    } else {
+                        "${cookieSummary.count} cookie${if (cookieSummary.count == 1) "" else "s"} · ${formatByteSize(cookieSummary.sizeBytes)}"
+                    },
+                    style = MaterialTheme.typography.bodySmall
+                )
+                TextButton(
+                    onClick = onDeleteCookies,
+                    contentPadding = PaddingValues(0.dp),
+                    enabled = cookieSummary.count > 0
+                ) {
                     Text("Delete cookies for this site")
                 }
                 Row(
@@ -102,4 +116,9 @@ fun SiteInfoDialog(
             }
         }
     )
+}
+
+private fun formatByteSize(bytes: Int): String = when {
+    bytes < 1024 -> "$bytes B"
+    else -> "%.1f KB".format(bytes / 1024.0)
 }
